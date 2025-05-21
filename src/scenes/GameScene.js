@@ -1,7 +1,10 @@
 import Phaser from 'phaser';
 import HexUtils from '../utils/HexUtils';
 import CameraControls from '../utils/CameraControls';
-import { GAME_SETTINGS, TERRITORY_TYPES, TERRITORY_COLORS } from '../config/gameConfig';
+import ErrorDisplay from '../components/ErrorDisplay';
+import { GAME_SETTINGS, TERRITORY_TYPES, TERRITORY_COLORS, RESOURCE_TYPES } from '../config/gameConfig';
+import { Game, Territory, Player, Construct, Resource, Market } from '../models';
+import ErrorHandler from '../utils/ErrorHandler';
 
 export default class GameScene extends Phaser.Scene {
     constructor() {
@@ -29,6 +32,9 @@ export default class GameScene extends Phaser.Scene {
         // Set up UI elements
         this.setupUI();
         
+        // Create error display
+        this.errorDisplay = new ErrorDisplay(this);
+        
         // Set camera bounds based on map size
         const mapWidth = this.mapSize.width * this.hexUtils.width * 0.75;
         const mapHeight = this.mapSize.height * this.hexUtils.height + this.hexUtils.height / 2;
@@ -37,11 +43,317 @@ export default class GameScene extends Phaser.Scene {
     }
     
     initializeGameData() {
-        // Initialize players
-        this.initializePlayers();
+        // Create game model
+        this.game = new Game({
+            playerCount: 4,
+            totalCycles: GAME_SETTINGS.TOTAL_CYCLES,
+            mapSize: GAME_SETTINGS.MAP_SIZE
+        });
         
-        // Initialize market prices
-        this.updateMarketPrices();
+        // Register event listeners
+        this.setupGameEvents();
+        
+        // Initialize territories in the game model based on map data
+        this.game.initializeTerritories(this.territories);
+        
+        // Update UI to match initial game state
+        this.updateUI();
+    }
+    
+    /**
+     * Set up game event listeners
+     */
+    setupGameEvents() {
+        // Listen for player turn changes
+        this.game.on('turnChanged', (data) => {
+            this.updatePlayerDisplay();
+        });
+        
+        // Listen for cycle completion
+        this.game.on('cycleComplete', (data) => {
+            this.cycleText.setText(`Cycle: ${data.cycle}/${data.totalCycles}`);
+        });
+        
+        // Listen for territory assignment
+        this.game.on('territoryAssigned', (data) => {
+            this.updateTerritoryVisuals(data.territory);
+        });
+        
+        // Listen for construct creation
+        this.game.on('constructCreated', (data) => {
+            this.updateTerritoryVisuals(data.territory);
+        });
+        
+        // Listen for market updates
+        this.game.on('marketUpdate', (data) => {
+            this.updateResourceDisplay(data.prices);
+        });
+        
+        // Listen for game over
+        this.game.on('gameOver', (data) => {
+            this.showGameOverScreen(data);
+        });
+        
+        // Listen for errors
+        this.game.on('error', (data) => {
+            this.handleGameError(data.error);
+        });
+        
+        // Listen for recovery attempts
+        this.game.on('recoveryAttempt', (data) => {
+            this.showRecoveryAttempt(data.error, data.recovery);
+        });
+        
+        // Listen for recovery success
+        this.game.on('recoverySuccess', (data) => {
+            this.showRecoverySuccess(data.error, data.recovery, data.result);
+        });
+        
+        // Listen for recovery failure
+        this.game.on('recoveryFailure', (data) => {
+            this.showRecoveryFailure(data.error, data.recovery);
+        });
+    }
+    
+    /**
+     * Handle a game error
+     * @param {Object} error - Error object
+     */
+    handleGameError(error) {
+        if (!this.errorDisplay) return;
+        
+        // Show error in UI
+        this.errorDisplay.showError(error);
+        
+        // Play error sound if applicable
+        this.playErrorSound(error.type);
+        
+        // Show visual indicator if applicable
+        this.showErrorIndicator(error);
+    }
+    
+    /**
+     * Play sound effect for an error
+     * @param {string} errorType - Type of error
+     */
+    playErrorSound(errorType) {
+        // Implement sound effects for different error types
+        // Will be implemented with sound system in Phase 7
+    }
+    
+    /**
+     * Show visual indicator for an error
+     * @param {Object} error - Error object
+     */
+    showErrorIndicator(error) {
+        // If error relates to a territory, flash that territory
+        if (error.data && error.data.territoryId) {
+            const visualTerritory = this.territoryMap[error.data.territoryId];
+            if (visualTerritory && visualTerritory.hex) {
+                // Flash the territory in red
+                this.flashObject(visualTerritory.hex, 0xFF0000);
+            }
+        }
+        
+        // If error relates to a player, flash player info
+        if (error.data && error.data.playerId) {
+            // Could flash player UI elements
+        }
+    }
+    
+    /**
+     * Flash an object to indicate an error
+     * @param {Phaser.GameObjects.GameObject} object - Object to flash
+     * @param {number} color - Color to flash to
+     */
+    flashObject(object, color) {
+        if (!object) return;
+        
+        const originalTint = object.tintTopLeft;
+        
+        // Create flash tween
+        this.tweens.add({
+            targets: object,
+            tint: color,
+            duration: 100,
+            yoyo: true,
+            repeat: 3,
+            onComplete: () => {
+                object.setTint(originalTint);
+            }
+        });
+    }
+    
+    /**
+     * Show recovery attempt message
+     * @param {Object} error - Error object
+     * @param {Object} recovery - Recovery action
+     */
+    showRecoveryAttempt(error, recovery) {
+        if (!this.errorDisplay) return;
+        this.errorDisplay.showInfo(`Attempting to recover: ${recovery.message}`);
+    }
+    
+    /**
+     * Show recovery success message
+     * @param {Object} error - Error object
+     * @param {Object} recovery - Recovery action
+     * @param {Object} result - Recovery result
+     */
+    showRecoverySuccess(error, recovery, result) {
+        if (!this.errorDisplay) return;
+        this.errorDisplay.showInfo(`Recovery successful: ${result.message || 'Game resumed'}`);
+    }
+    
+    /**
+     * Show recovery failure message
+     * @param {Object} error - Error object
+     * @param {Object} recovery - Recovery action
+     */
+    showRecoveryFailure(error, recovery) {
+        if (!this.errorDisplay) return;
+        this.errorDisplay.showWarning(`Recovery failed. Please try a different action.`);
+    }
+    
+    /**
+     * Update all UI elements to match game state
+     */
+    updateUI() {
+        // Update cycle display
+        this.cycleText.setText(`Cycle: ${this.game.currentCycle}/${this.game.totalCycles}`);
+        
+        // Update player display
+        this.updatePlayerDisplay();
+        
+        // Update resource display
+        this.updateResourceDisplay();
+        
+        // Update territory visuals
+        for (const territory of Object.values(this.game.territories)) {
+            this.updateTerritoryVisuals(territory);
+        }
+    }
+    
+    /**
+     * Update the resource display to show current prices and amounts
+     * @param {Object} prices - Optional market prices to display
+     */
+    updateResourceDisplay(prices = null) {
+        const currentPlayer = this.game.getCurrentPlayer();
+        
+        // Get market prices if not provided
+        if (!prices && this.game.market) {
+            prices = Object.fromEntries(
+                Object.entries(this.game.resources).map(
+                    ([type, resource]) => [type, resource.currentPrice]
+                )
+            );
+        }
+        
+        // Update resource text displays
+        for (const [key, text] of Object.entries(this.resourceTexts)) {
+            const amount = currentPlayer.resources[key] || 0;
+            const price = prices ? prices[key] : '—';
+            text.setText(`${key.charAt(0).toUpperCase() + key.slice(1)}: ${amount} (${price} gp)`);
+        }
+        
+        // Update gold display
+        this.goldText.setText(`Gold: ${currentPlayer.gold}`);
+    }
+    
+    /**
+     * Update the visuals for a territory to match its game state
+     * @param {Territory} territory - The territory to update
+     */
+    updateTerritoryVisuals(territory) {
+        // Find the visual representation of this territory
+        const visualTerritory = this.territoryMap[territory.id];
+        if (!visualTerritory) return;
+        
+        // Update owner color if territory is owned
+        if (territory.owner) {
+            // Show owner indicator
+            if (!visualTerritory.ownerIndicator) {
+                visualTerritory.ownerIndicator = this.add.circle(
+                    visualTerritory.x,
+                    visualTerritory.y,
+                    GAME_SETTINGS.HEX_SIZE * 0.8,
+                    territory.owner.color,
+                    0.3
+                );
+                this.mapContainer.add(visualTerritory.ownerIndicator);
+            } else {
+                visualTerritory.ownerIndicator.fillColor = territory.owner.color;
+                visualTerritory.ownerIndicator.visible = true;
+            }
+        } else if (visualTerritory.ownerIndicator) {
+            // Hide owner indicator if territory is not owned
+            visualTerritory.ownerIndicator.visible = false;
+        }
+        
+        // Update construct visualization if territory has a construct
+        if (territory.construct) {
+            // Create or update construct visual
+            if (!visualTerritory.constructVisual) {
+                // For now, just show a simple shape for the construct type
+                const constructColor = this.getConstructColor(territory.construct.type);
+                visualTerritory.constructVisual = this.add.circle(
+                    visualTerritory.x,
+                    visualTerritory.y,
+                    GAME_SETTINGS.HEX_SIZE * 0.4,
+                    constructColor,
+                    0.8
+                );
+                visualTerritory.constructVisual.setStrokeStyle(2, 0xFFFFFF, 0.8);
+                this.mapContainer.add(visualTerritory.constructVisual);
+            } else {
+                const constructColor = this.getConstructColor(territory.construct.type);
+                visualTerritory.constructVisual.fillColor = constructColor;
+                visualTerritory.constructVisual.visible = true;
+            }
+            
+            // Show construct level
+            if (!visualTerritory.levelText) {
+                visualTerritory.levelText = this.add.text(
+                    visualTerritory.x,
+                    visualTerritory.y,
+                    territory.construct.level.toString(),
+                    {
+                        fontFamily: 'sans-serif',
+                        fontSize: '16px',
+                        color: '#FFFFFF',
+                        align: 'center'
+                    }
+                ).setOrigin(0.5);
+                this.mapContainer.add(visualTerritory.levelText);
+            } else {
+                visualTerritory.levelText.setText(territory.construct.level.toString());
+                visualTerritory.levelText.visible = true;
+            }
+        } else {
+            // Hide construct visuals if no construct
+            if (visualTerritory.constructVisual) {
+                visualTerritory.constructVisual.visible = false;
+            }
+            if (visualTerritory.levelText) {
+                visualTerritory.levelText.visible = false;
+            }
+        }
+    }
+    
+    /**
+     * Get color for a construct type
+     * @param {string} constructType - Type of construct
+     * @returns {number} Color as hex number
+     */
+    getConstructColor(constructType) {
+        switch (constructType) {
+            case 'mana_conduit': return 0x8080FF;
+            case 'vitality_well': return 0x80FF80;
+            case 'arcanum_extractor': return 0xFF8080;
+            case 'aether_resonator': return 0xFFFF80;
+            default: return 0xFFFFFF;
+        }
     }
     
     setupUI() {
@@ -173,7 +485,7 @@ export default class GameScene extends Phaser.Scene {
     }
     
     createMap() {
-        this.territories = [];
+        this.territoryEntities = []; // Visual and interaction territory objects
         this.territoryMap = {}; // For quick look-up by coordinates
         this.mapContainer = this.add.container(0, 0);
         
@@ -196,27 +508,44 @@ export default class GameScene extends Phaser.Scene {
                 hex.setTint(TERRITORY_COLORS[territoryType]);
                 this.mapContainer.add(hex);
                 
-                // Store territory data with axial coordinates
+                // Create territory data object for the game model
                 const territory = {
                     id: `${q},${r}`,
                     q: q,
                     r: r,
                     type: territoryType,
                     x: pos.x,
-                    y: pos.y,
-                    hex: hex,
-                    owner: null,
-                    construct: null,
-                    improvements: []
+                    y: pos.y
                 };
                 
+                // Create visual entity for the territory
+                const visualEntity = {
+                    id: territory.id,
+                    q: territory.q,
+                    r: territory.r,
+                    type: territory.type,
+                    x: territory.x,
+                    y: territory.y,
+                    hex: hex,
+                    ownerIndicator: null,
+                    constructVisual: null,
+                    levelText: null
+                };
+                
+                this.territoryEntities.push(visualEntity);
+                this.territoryMap[territory.id] = visualEntity;
+                
+                // Store the territory for the game model
                 this.territories.push(territory);
-                this.territoryMap[`${q},${r}`] = territory;
                 
                 // Make territory interactive
                 hex.setInteractive();
                 hex.on('pointerdown', () => {
-                    this.selectTerritory(territory);
+                    // Get the territory from the game model for selection
+                    const gameTerritory = this.game.territories[territory.id];
+                    if (gameTerritory) {
+                        this.selectTerritory(gameTerritory);
+                    }
                 });
                 
                 hex.on('pointerover', () => {
@@ -228,13 +557,15 @@ export default class GameScene extends Phaser.Scene {
                     hex.setTint(TERRITORY_COLORS[territoryType]);
                     
                     // If this is the selected territory, keep it highlighted differently
-                    if (this.selectedTerritory === territory) {
+                    const gameTerritory = this.game.territories[territory.id];
+                    if (this.selectedTerritory && gameTerritory && 
+                        this.selectedTerritory.id === gameTerritory.id) {
                         hex.setTint(0xFFFFFF);
                     }
                 });
                 
                 // Add a small icon to represent the territory type
-                this.addTerritoryIcon(territory);
+                this.addTerritoryIcon(visualEntity);
             }
         }
     }
@@ -301,8 +632,21 @@ export default class GameScene extends Phaser.Scene {
         territory.icon = icon;
     }
     
+    /**
+     * Select a territory and show its details
+     * @param {Territory} territory - The territory to select
+     */
     selectTerritory(territory) {
         console.log(`Selected territory at ${territory.id} of type ${territory.type}`);
+        
+        // Update selected territory
+        this.selectedTerritory = territory;
+        
+        // Change highlight for selected territory
+        const visualTerritory = this.territoryMap[territory.id];
+        if (visualTerritory) {
+            visualTerritory.hex.setTint(0xFFFFFF);
+        }
         
         // Show territory details in UI
         // For now, we'll just update a text field
@@ -320,47 +664,175 @@ export default class GameScene extends Phaser.Scene {
             );
         }
         
+        // Calculate territory resource production details
+        let productionInfo = '';
+        if (territory.construct) {
+            const resourceType = territory.construct.getResourceType();
+            const production = territory.calculateProduction(resourceType);
+            productionInfo = `Production: ${production} ${resourceType}/cycle`;
+        }
+        
         // Set text with territory details
         this.territoryInfoText.setText(
             `Territory: ${territory.id}\n` +
             `Type: ${territory.type}\n` +
             `Owner: ${territory.owner ? territory.owner.name : 'None'}\n` +
-            `Construct: ${territory.construct ? territory.construct.type : 'None'}`
+            `Construct: ${territory.construct ? territory.construct.type : 'None'}\n` +
+            `Level: ${territory.construct ? territory.construct.level : '-'}\n` +
+            productionInfo
         );
+        
+        // Show territory actions panel based on state
+        this.showTerritoryActions(territory);
     }
     
-    initializePlayers() {
-        // Create game state object
-        this.gameState = {
-            players: [],
-            currentPlayerIndex: 0,
-            currentCycle: 1,
-            totalCycles: GAME_SETTINGS.TOTAL_CYCLES,
-            marketPrices: {}
+    /**
+     * Show territory action buttons based on territory state
+     * @param {Territory} territory - The selected territory
+     */
+    showTerritoryActions(territory) {
+        // Clear existing action buttons
+        if (this.actionButtons) {
+            this.actionButtons.forEach(button => button.destroy());
+        }
+        this.actionButtons = [];
+        
+        const currentPlayer = this.game.getCurrentPlayer();
+        const isOwned = territory.owner !== null;
+        const isOwnedByCurrentPlayer = territory.owner === currentPlayer;
+        const hasConstruct = territory.construct !== null;
+        
+        const buttonY = 530;
+        const buttonWidth = 160;
+        const buttonHeight = 40;
+        const buttonSpacing = 50;
+        const buttonStyle = {
+            fontSize: '14px',
+            fill: '#FFFFFF',
+            backgroundColor: '#444466',
+            padding: {
+                x: 10,
+                y: 5
+            }
         };
         
-        // Create four players for testing
-        const playerColors = [0xFF0000, 0x0000FF, 0x00FF00, 0xFFFF00];
-        
-        for (let i = 0; i < 4; i++) {
-            this.gameState.players.push({
-                id: i + 1,
-                name: `Player ${i + 1}`,
-                color: playerColors[i],
-                gold: GAME_SETTINGS.STARTING_GOLD,
-                resources: {
-                    mana: 0,
-                    vitality: 0,
-                    arcanum: 0,
-                    aether: 0
-                },
-                territories: [],
-                constructs: []
+        if (!isOwned) {
+            // Show claim button
+            const claimButton = this.add.text(
+                this.cameras.main.width - 350 + buttonWidth/2,
+                buttonY,
+                'Claim Territory',
+                buttonStyle
+            ).setOrigin(0.5);
+            
+            claimButton.setInteractive({ useHandCursor: true });
+            claimButton.on('pointerdown', () => {
+                const result = this.game.assignTerritory(territory.id, currentPlayer);
+                if (!result.success) {
+                    // If there was an error, it will be shown via the error handler
+                    console.log("Failed to claim territory:", result.message);
+                }
             });
+            
+            this.actionButtons.push(claimButton);
+        } else if (isOwnedByCurrentPlayer && !hasConstruct) {
+            // Show build construct buttons based on territory type
+            const constructTypeOptions = this.getCompatibleConstructTypes(territory.type);
+            
+            constructTypeOptions.forEach((type, index) => {
+                const buildButton = this.add.text(
+                    this.cameras.main.width - 350 + buttonWidth/2,
+                    buttonY + index * buttonSpacing,
+                    `Build ${this.formatConstructName(type)}`,
+                    buttonStyle
+                ).setOrigin(0.5);
+                
+                buildButton.setInteractive({ useHandCursor: true });
+                buildButton.on('pointerdown', () => {
+                    const result = this.game.createConstruct(territory.id, type, currentPlayer);
+                    if (!result.success) {
+                        // If there was an error, it will be shown via the error handler
+                        console.log("Failed to build construct:", result.message);
+                    }
+                });
+                
+                this.actionButtons.push(buildButton);
+            });
+        } else if (isOwnedByCurrentPlayer && hasConstruct) {
+            // Show upgrade button if construct is not max level
+            if (territory.construct.level < 3) {
+                const upgradeButton = this.add.text(
+                    this.cameras.main.width - 350 + buttonWidth/2,
+                    buttonY,
+                    'Upgrade Construct',
+                    buttonStyle
+                ).setOrigin(0.5);
+                
+                upgradeButton.setInteractive({ useHandCursor: true });
+                upgradeButton.on('pointerdown', () => {
+                    const costs = territory.construct.getUpgradeCosts();
+                    territory.construct.upgrade(costs, currentPlayer);
+                    this.updateTerritoryVisuals(territory);
+                });
+                
+                this.actionButtons.push(upgradeButton);
+            }
+            
+            // Show add improvement button
+            const improvementButton = this.add.text(
+                this.cameras.main.width - 350 + buttonWidth/2,
+                buttonY + buttonSpacing,
+                'Add Improvement',
+                buttonStyle
+            ).setOrigin(0.5);
+            
+            improvementButton.setInteractive({ useHandCursor: true });
+            improvementButton.on('pointerdown', () => {
+                // Would show improvement selection UI here
+                console.log('Improvement selection - to be implemented');
+            });
+            
+            this.actionButtons.push(improvementButton);
         }
+    }
+    
+    /**
+     * Get construct types that are compatible with a territory type
+     * @param {string} territoryType - Type of territory
+     * @returns {Array} Array of compatible construct types
+     */
+    getCompatibleConstructTypes(territoryType) {
+        // All territories can have any construct, but some combinations 
+        // are more efficient based on territory modifiers
+        const allTypes = [
+            'mana_conduit',
+            'vitality_well',
+            'arcanum_extractor',
+            'aether_resonator'
+        ];
         
-        this.gameState.currentPlayerIndex = 0;
-        this.updatePlayerDisplay();
+        // Could filter or prioritize based on territory type
+        return allTypes;
+    }
+    
+    /**
+     * Format construct type into a readable name
+     * @param {string} type - Construct type
+     * @returns {string} Formatted name
+     */
+    formatConstructName(type) {
+        return type
+            .split('_')
+            .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+            .join(' ');
+    }
+    
+    /**
+     * This method is now a no-op since player initialization
+     * is handled by the Game model when it's created
+     */
+    initializePlayers() {
+        // Nothing to do here anymore - Game model handles this
     }
     
     setupGameControls() {
@@ -377,123 +849,59 @@ export default class GameScene extends Phaser.Scene {
         });
     }
     
-    // Add a method to update market prices
+    /**
+     * Update market prices - now handled by Game model
+     */
     updateMarketPrices() {
-        // Import from config later
-        const { BASE_PRICES } = require('../config/gameConfig');
-        
-        // Initialize market prices with base prices
-        this.gameState.marketPrices = { ...BASE_PRICES };
+        if (this.game && this.game.market) {
+            this.game.market.updatePrices(this.game.playerCount);
+        }
     }
     
+    /**
+     * Advance to the next player's turn
+     */
     nextTurn() {
-        // Advance to next player
-        this.gameState.currentPlayerIndex = (this.gameState.currentPlayerIndex + 1) % this.gameState.players.length;
+        // Advance to the next turn in the game model
+        this.game.nextTurn();
         
-        // If we've gone through all players, advance to next cycle
-        if (this.gameState.currentPlayerIndex === 0) {
-            this.gameState.currentCycle++;
-            
-            if (this.gameState.currentCycle > this.gameState.totalCycles) {
-                this.endGame();
-                return;
-            }
-            
-            // Produce resources for all territories
-            this.produceResources();
-            
-            // Update cycle display
-            this.cycleText.setText(`Cycle: ${this.gameState.currentCycle}/${this.gameState.totalCycles}`);
-        }
-        
+        // Update UI
         this.updatePlayerDisplay();
     }
     
+    /**
+     * Update the player display based on current game state
+     */
     updatePlayerDisplay() {
-        const currentPlayer = this.gameState.players[this.gameState.currentPlayerIndex];
+        const currentPlayer = this.game.getCurrentPlayer();
         this.playerText.setText(`Current Player: ${currentPlayer.name}`);
         
         // Update resource display
-        for (const [key, text] of Object.entries(this.resourceTexts)) {
-            text.setText(`${key.charAt(0).toUpperCase() + key.slice(1)}: ${currentPlayer.resources[key]} (${this.gameState.marketPrices[key]} gp)`);
-        }
-        
-        // Update gold display
-        this.goldText.setText(`Gold: ${currentPlayer.gold}`);
+        this.updateResourceDisplay();
     }
     
-    produceResources() {
-        // Calculate resource production for all territories with constructs
-        this.territories.forEach(territory => {
-            if (territory.owner !== null && territory.construct !== null) {
-                // For now, use a simple production formula
-                // Later, we'll implement the full formula from the design doc
-                let production = 10; // Base production
-                
-                // Get resource type for this construct
-                const resourceType = this.getResourceTypeForConstruct(territory.construct.type);
-                
-                // Apply territory modifiers based on config
-                const territoryModifiers = require('../config/gameConfig').TERRITORY_MODIFIERS;
-                const modifiers = territoryModifiers[territory.type];
-                
-                if (modifiers && modifiers[resourceType]) {
-                    production += production * modifiers[resourceType];
-                }
-                
-                // Add resources to player
-                territory.owner.resources[resourceType] += Math.floor(production);
-            }
-        });
-        
-        // Apply resource decay
-        const decayRates = require('../config/gameConfig').DECAY_RATES;
-        this.gameState.players.forEach(player => {
-            Object.entries(decayRates).forEach(([resourceType, rate]) => {
-                if (rate > 0) {
-                    // Calculate how much is lost to decay
-                    const amountDecayed = Math.floor(player.resources[resourceType] * rate);
-                    player.resources[resourceType] -= amountDecayed;
-                }
-            });
-        });
+    /**
+     * Show the game over screen
+     * @param {Object} data - Game over data
+     */
+    showGameOverScreen(data) {
+        // Create an overlay for the game over screen
+        this.endGame();
     }
     
-    getResourceTypeForConstruct(constructType) {
-        switch (constructType) {
-            case 'mana_conduit': return 'mana';
-            case 'vitality_well': return 'vitality';
-            case 'arcanum_extractor': return 'arcanum';
-            case 'aether_resonator': return 'aether';
-            default: return 'mana';
-        }
-    }
-    
-    endGame() {
+    /**
+     * Show game over screen with final scores
+     * @param {Object} data - Final game data from Game model 
+     */
+    endGame(data) {
         console.log('Game over!');
-        // Calculate final scores
-        let highestScore = 0;
-        let winner = null;
         
-        this.gameState.players.forEach(player => {
-            // Calculate score using formula from game description
-            const score = 
-                player.gold * 1 +
-                player.territories.length * 50 +
-                player.constructs.length * 75 +
-                // Sum of construct levels * 25
-                player.constructs.reduce((sum, construct) => sum + construct.level * 25, 0) +
-                // Sum of resources * 2
-                (player.resources.mana + 
-                 player.resources.vitality + 
-                 player.resources.arcanum + 
-                 player.resources.aether) * 2;
-                 
-            if (score > highestScore) {
-                highestScore = score;
-                winner = player;
-            }
-        });
+        // Get results from model if not provided
+        if (!data) {
+            data = this.game.endGame();
+        }
+        
+        const { winner, scores } = data;
         
         // Create game over overlay
         const overlay = this.add.rectangle(
@@ -547,17 +955,9 @@ export default class GameScene extends Phaser.Scene {
         // Show player scores
         const scoreStartY = this.cameras.main.height / 2 - 20;
         
-        this.gameState.players.forEach((player, index) => {
-            // Calculate score for this player
-            const score = 
-                player.gold * 1 +
-                player.territories.length * 50 +
-                player.constructs.length * 75 +
-                player.constructs.reduce((sum, construct) => sum + construct.level * 25, 0) +
-                (player.resources.mana + 
-                 player.resources.vitality + 
-                 player.resources.arcanum + 
-                 player.resources.aether) * 2;
+        scores.forEach((scoreData, index) => {
+            const player = scoreData.player;
+            const score = scoreData.score;
             
             // Create score text
             const textColor = player === winner ? '#FFD700' : '#FFFFFF';
@@ -629,6 +1029,19 @@ export default class GameScene extends Phaser.Scene {
         // Update camera controls
         if (this.cameraControls) {
             this.cameraControls.update(time, delta);
+        }
+        
+        // Update error display
+        if (this.errorDisplay) {
+            this.errorDisplay.update(time, delta);
+        }
+        
+        // Update game model if needed
+        // This could be used for real-time features like auction countdowns
+        
+        // Check for game over
+        if (this.game && !this.game.paused && this.game.checkGameEnd()) {
+            this.endGame();
         }
     }
 }
