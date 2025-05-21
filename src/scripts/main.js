@@ -3,6 +3,13 @@ import BootScene from '../scenes/BootScene';
 import MainMenuScene from '../scenes/MainMenuScene';
 import GameScene from '../scenes/GameScene';
 
+/**
+ * Magical Frontiers: M.U.L.E. Reimagined in Fantasy
+ * A fantasy economic strategy game based on the classic M.U.L.E.
+ * 
+ * This is the main entry point for the game.
+ */
+
 // Game configuration
 const config = {
     type: Phaser.AUTO,
@@ -21,63 +28,23 @@ const config = {
             gravity: { y: 0 },
             debug: false
         }
+    },
+    render: {
+        pixelArt: false,
+        antialias: true
     }
 };
 
 // Create the game instance
-window.game = new Phaser.Game(config);
+const game = new Phaser.Game(config);
 
-// Global game state
-window.gameState = {
-    // Constants
-    RESOURCE_TYPES: {
-        MANA: 'mana',
-        VITALITY: 'vitality',
-        ARCANUM: 'arcanum',
-        AETHER: 'aether'
-    },
-    TERRITORY_TYPES: {
-        ANCIENT_GROVE: 'ancient_grove',
-        CRYSTALLINE_CAVE: 'crystalline_cave',
-        RUINED_TEMPLE: 'ruined_temple',
-        MOUNTAIN_PEAK: 'mountain_peak',
-        MARSHLAND: 'marshland',
-        VOLCANIC_FIELD: 'volcanic_field'
-    },
-    CONSTRUCT_TYPES: {
-        MANA_CONDUIT: 'mana_conduit',
-        VITALITY_WELL: 'vitality_well',
-        ARCANUM_EXTRACTOR: 'arcanum_extractor',
-        AETHER_RESONATOR: 'aether_resonator'
-    },
-    // Player data
-    players: [],
-    currentPlayerIndex: 0,
-    // Game cycle data
-    currentCycle: 1,
-    totalCycles: 12,
-    // Economy data
-    marketPrices: {},
-    // Map data
-    territories: [],
-    // Initialize base prices for resources
-    basePrice: {
-        mana: 20,
-        vitality: 25, 
-        arcanum: 35,
-        aether: 100
-    },
-    // Initialize game state
-    init: function() {
-        // Set initial market prices
-        this.marketPrices = {
-            mana: this.basePrice.mana,
-            vitality: this.basePrice.vitality,
-            arcanum: this.basePrice.arcanum,
-            aether: this.basePrice.aether
-        };
-    }
-};
+// Add a global reference to the game instance
+window.game = game;
 
-// Initialize game state
-window.gameState.init();
+// Handle game resize events
+window.addEventListener('resize', () => {
+    game.scale.refresh();
+});
+
+// Add a loader for debugging
+console.log('Magical Frontiers: Game initialized');

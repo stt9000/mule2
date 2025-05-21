@@ -1,24 +1,47 @@
 import Phaser from 'phaser';
+import HexUtils from '../utils/HexUtils';
+import CameraControls from '../utils/CameraControls';
+import { GAME_SETTINGS, TERRITORY_TYPES, TERRITORY_COLORS } from '../config/gameConfig';
 
 export default class GameScene extends Phaser.Scene {
     constructor() {
         super('GameScene');
-        this.mapSize = { width: 8, height: 6 }; // 8x6 grid of territories
-        this.hexSize = 100; // Size of hex tiles
+        this.mapSize = GAME_SETTINGS.MAP_SIZE;
+        this.hexUtils = new HexUtils(GAME_SETTINGS.HEX_SIZE);
+        this.territories = [];
+        this.selectedTerritory = null;
     }
 
     create() {
-        // Basic UI setup
-        this.setupUI();
+        // Set up camera controls
+        this.cameraControls = new CameraControls(this, {
+            minZoom: 0.5,
+            maxZoom: 2.0,
+            padding: 100
+        });
         
-        // Create hex grid map
+        // Create map first (so it's behind UI)
         this.createMap();
         
-        // Initialize players (temporary placeholder)
+        // Initialize game data
+        this.initializeGameData();
+        
+        // Set up UI elements
+        this.setupUI();
+        
+        // Set camera bounds based on map size
+        const mapWidth = this.mapSize.width * this.hexUtils.width * 0.75;
+        const mapHeight = this.mapSize.height * this.hexUtils.height + this.hexUtils.height / 2;
+        this.cameraControls.setBounds(0, 0, mapWidth, mapHeight);
+        this.cameraControls.centerOn(mapWidth / 2, mapHeight / 2);
+    }
+    
+    initializeGameData() {
+        // Initialize players
         this.initializePlayers();
         
-        // Initialize game state and controls
-        this.setupGameControls();
+        // Initialize market prices
+        this.updateMarketPrices();
     }
     
     setupUI() {
@@ -151,105 +174,131 @@ export default class GameScene extends Phaser.Scene {
     
     createMap() {
         this.territories = [];
+        this.territoryMap = {}; // For quick look-up by coordinates
+        this.mapContainer = this.add.container(0, 0);
         
-        // Create hex grid map using placeholder graphics
-        for (let y = 0; y < this.mapSize.height; y++) {
-            for (let x = 0; x < this.mapSize.width; x++) {
-                // Calculate hex position (using offset coordinates)
-                const xPos = x * this.hexSize * 1.5;
-                const yPos = y * this.hexSize * 0.866 * 2 + (x % 2) * this.hexSize * 0.866;
+        // Create hex grid map using axial coordinates
+        for (let r = 0; r < this.mapSize.height; r++) {
+            // Adjust the starting q based on the row to create a more rectangular grid
+            const qStart = Math.floor(r / 2);
+            const qEnd = qStart + this.mapSize.width;
+            
+            for (let q = qStart; q < qEnd; q++) {
+                // Get pixel position from axial coordinates
+                const pos = this.hexUtils.axialToPixel(q, r);
                 
-                // Create hexagon shape for the territory
-                const territoryTypes = Object.values(window.gameState.TERRITORY_TYPES);
-                // Randomly assign territory type for now
-                const territoryType = territoryTypes[Math.floor(Math.random() * territoryTypes.length)];
+                // Determine territory type - using different distribution methods
+                // For now, we'll use a semi-random approach that creates realistic clusters
+                const territoryType = this.determineTerrritoryType(q, r);
                 
-                // Create hexagon graphics
-                const hex = this.add.graphics();
+                // Create hex visuals using the hex outline image
+                const hex = this.add.image(pos.x, pos.y, 'hex_outline');
+                hex.setTint(TERRITORY_COLORS[territoryType]);
+                this.mapContainer.add(hex);
                 
-                // Set different colors based on territory type
-                switch (territoryType) {
-                    case 'ancient_grove':
-                        hex.fillStyle(0x228822, 1); // Green
-                        break;
-                    case 'crystalline_cave':
-                        hex.fillStyle(0x4444FF, 1); // Blue
-                        break;
-                    case 'ruined_temple':
-                        hex.fillStyle(0xCCCCAA, 1); // Tan
-                        break;
-                    case 'mountain_peak':
-                        hex.fillStyle(0x888888, 1); // Gray
-                        break;
-                    case 'marshland':
-                        hex.fillStyle(0x557733, 1); // Olive
-                        break;
-                    case 'volcanic_field':
-                        hex.fillStyle(0xAA4422, 1); // Reddish brown
-                        break;
-                }
-                
-                // Draw hexagon
-                hex.lineStyle(2, 0xFFFFFF, 1);
-                
-                // Create points for hexagon
-                const points = [];
-                for (let i = 0; i < 6; i++) {
-                    const angle = Math.PI / 3 * i;
-                    points.push({
-                        x: xPos + Math.cos(angle) * this.hexSize,
-                        y: yPos + Math.sin(angle) * this.hexSize
-                    });
-                }
-                
-                // Draw filled hexagon
-                hex.beginPath();
-                hex.moveTo(points[0].x, points[0].y);
-                for (let i = 1; i < 6; i++) {
-                    hex.lineTo(points[i].x, points[i].y);
-                }
-                hex.closePath();
-                hex.fillPath();
-                hex.strokePath();
-                
-                // Store territory data
+                // Store territory data with axial coordinates
                 const territory = {
-                    id: `${x}-${y}`,
+                    id: `${q},${r}`,
+                    q: q,
+                    r: r,
                     type: territoryType,
-                    x: xPos,
-                    y: yPos,
-                    graphics: hex,
+                    x: pos.x,
+                    y: pos.y,
+                    hex: hex,
                     owner: null,
                     construct: null,
                     improvements: []
                 };
                 
                 this.territories.push(territory);
+                this.territoryMap[`${q},${r}`] = territory;
                 
                 // Make territory interactive
-                const hitArea = new Phaser.Geom.Polygon(points);
-                const hitAreaCallback = Phaser.Geom.Polygon.Contains;
-                
-                // Create invisible interactive zone
-                const zone = this.add.zone(xPos, yPos, this.hexSize * 2, this.hexSize * 2)
-                    .setInteractive(hitArea, hitAreaCallback)
-                    .setData('territory', territory);
-                    
-                zone.on('pointerdown', () => {
+                hex.setInteractive();
+                hex.on('pointerdown', () => {
                     this.selectTerritory(territory);
                 });
                 
-                zone.on('pointerover', () => {
-                    hex.lineStyle(3, 0xFFFF00, 1);
-                    hex.strokePath();
+                hex.on('pointerover', () => {
+                    hex.setTint(0xFFFF00); // Highlight on hover
                 });
                 
-                zone.on('pointerout', () => {
-                    hex.lineStyle(2, 0xFFFFFF, 1);
-                    hex.strokePath();
+                hex.on('pointerout', () => {
+                    // Reset to original color
+                    hex.setTint(TERRITORY_COLORS[territoryType]);
+                    
+                    // If this is the selected territory, keep it highlighted differently
+                    if (this.selectedTerritory === territory) {
+                        hex.setTint(0xFFFFFF);
+                    }
                 });
+                
+                // Add a small icon to represent the territory type
+                this.addTerritoryIcon(territory);
             }
         }
+    }
+    
+    /**
+     * Determine territory type based on position and neighboring territories
+     * Uses a simple noise-based approach to create natural-looking clusters
+     */
+    determineTerrritoryType(q, r) {
+        // Use a simple noise function for more natural-looking terrain
+        // For now, just use a simple mapping based on position
+        const noiseValue = Math.sin(q * 0.5) * Math.cos(r * 0.5) * 0.5 + 0.5;
+        
+        // Create more natural clusters by checking neighbors if this isn't the first territory
+        let neighborTypes = {};
+        
+        // Check existing neighbors to create clusters
+        if (this.territoryMap) {
+            const neighbors = this.hexUtils.neighbors(q, r);
+            neighbors.forEach(neighbor => {
+                const territory = this.territoryMap[`${neighbor.q},${neighbor.r}`];
+                if (territory) {
+                    if (!neighborTypes[territory.type]) {
+                        neighborTypes[territory.type] = 0;
+                    }
+                    neighborTypes[territory.type]++;
+                }
+            });
+        }
+        
+        // Determine type based on neighbors and noise
+        const territoryTypes = Object.values(TERRITORY_TYPES);
+        
+        // If we have neighbors, use them to influence the choice
+        if (Object.keys(neighborTypes).length > 0) {
+            // 70% chance to match a neighbor
+            if (Math.random() < 0.7) {
+                // Create weighted array of neighboring types
+                const weightedTypes = [];
+                Object.entries(neighborTypes).forEach(([type, count]) => {
+                    for (let i = 0; i < count; i++) {
+                        weightedTypes.push(type);
+                    }
+                });
+                return weightedTypes[Math.floor(Math.random() * weightedTypes.length)];
+            }
+        }
+        
+        // Otherwise use noise value to determine type
+        const index = Math.floor(noiseValue * territoryTypes.length);
+        return territoryTypes[index];
+    }
+    
+    /**
+     * Add a visual icon for each territory type
+     */
+    addTerritoryIcon(territory) {
+        // For now, just use a colored dot to represent territory type
+        const icon = this.add.circle(territory.x, territory.y, 10, TERRITORY_COLORS[territory.type], 1);
+        icon.setStrokeStyle(1, 0xffffff);
+        this.mapContainer.add(icon);
+        
+        // Store reference to the icon
+        territory.icon = icon;
     }
     
     selectTerritory(territory) {
@@ -281,95 +330,71 @@ export default class GameScene extends Phaser.Scene {
     }
     
     initializePlayers() {
-        // Create four players for testing
-        window.gameState.players = [
-            {
-                id: 1,
-                name: 'Player 1',
-                color: 0xFF0000,
-                gold: 1000,
-                resources: {
-                    mana: 0,
-                    vitality: 0,
-                    arcanum: 0,
-                    aether: 0
-                },
-                territories: [],
-                constructs: []
-            },
-            {
-                id: 2,
-                name: 'Player 2',
-                color: 0x0000FF,
-                gold: 1000,
-                resources: {
-                    mana: 0,
-                    vitality: 0,
-                    arcanum: 0,
-                    aether: 0
-                },
-                territories: [],
-                constructs: []
-            },
-            {
-                id: 3,
-                name: 'Player 3',
-                color: 0x00FF00,
-                gold: 1000,
-                resources: {
-                    mana: 0,
-                    vitality: 0,
-                    arcanum: 0,
-                    aether: 0
-                },
-                territories: [],
-                constructs: []
-            },
-            {
-                id: 4,
-                name: 'Player 4',
-                color: 0xFFFF00,
-                gold: 1000,
-                resources: {
-                    mana: 0,
-                    vitality: 0,
-                    arcanum: 0,
-                    aether: 0
-                },
-                territories: [],
-                constructs: []
-            }
-        ];
+        // Create game state object
+        this.gameState = {
+            players: [],
+            currentPlayerIndex: 0,
+            currentCycle: 1,
+            totalCycles: GAME_SETTINGS.TOTAL_CYCLES,
+            marketPrices: {}
+        };
         
-        window.gameState.currentPlayerIndex = 0;
+        // Create four players for testing
+        const playerColors = [0xFF0000, 0x0000FF, 0x00FF00, 0xFFFF00];
+        
+        for (let i = 0; i < 4; i++) {
+            this.gameState.players.push({
+                id: i + 1,
+                name: `Player ${i + 1}`,
+                color: playerColors[i],
+                gold: GAME_SETTINGS.STARTING_GOLD,
+                resources: {
+                    mana: 0,
+                    vitality: 0,
+                    arcanum: 0,
+                    aether: 0
+                },
+                territories: [],
+                constructs: []
+            });
+        }
+        
+        this.gameState.currentPlayerIndex = 0;
         this.updatePlayerDisplay();
     }
     
     setupGameControls() {
-        // Add camera controls for panning around the map
-        this.input.on('pointermove', (pointer) => {
-            if (pointer.isDown && !pointer.wasTouch) {
-                this.cameras.main.scrollX -= (pointer.x - pointer.prevPosition.x) / this.cameras.main.zoom;
-                this.cameras.main.scrollY -= (pointer.y - pointer.prevPosition.y) / this.cameras.main.zoom;
-            }
+        // Camera controls are now handled by the CameraControls class
+        
+        // Add keyboard shortcuts
+        this.input.keyboard.on('keydown-SPACE', () => {
+            this.nextTurn();
         });
         
-        // Add zoom controls
-        this.input.on('wheel', (pointer, gameObjects, deltaX, deltaY, deltaZ) => {
-            const newZoom = this.cameras.main.zoom - deltaY * 0.001;
-            this.cameras.main.setZoom(Phaser.Math.Clamp(newZoom, 0.5, 2));
+        this.input.keyboard.on('keydown-M', () => {
+            console.log('Market view toggled');
+            // Will implement market view in Phase 3
         });
+    }
+    
+    // Add a method to update market prices
+    updateMarketPrices() {
+        // Import from config later
+        const { BASE_PRICES } = require('../config/gameConfig');
+        
+        // Initialize market prices with base prices
+        this.gameState.marketPrices = { ...BASE_PRICES };
     }
     
     nextTurn() {
         // Advance to next player
-        window.gameState.currentPlayerIndex = (window.gameState.currentPlayerIndex + 1) % window.gameState.players.length;
+        this.gameState.currentPlayerIndex = (this.gameState.currentPlayerIndex + 1) % this.gameState.players.length;
         
         // If we've gone through all players, advance to next cycle
-        if (window.gameState.currentPlayerIndex === 0) {
-            window.gameState.currentCycle++;
+        if (this.gameState.currentPlayerIndex === 0) {
+            this.gameState.currentCycle++;
             
-            if (window.gameState.currentCycle > window.gameState.totalCycles) {
+            if (this.gameState.currentCycle > this.gameState.totalCycles) {
                 this.endGame();
                 return;
             }
@@ -378,19 +403,19 @@ export default class GameScene extends Phaser.Scene {
             this.produceResources();
             
             // Update cycle display
-            this.cycleText.setText(`Cycle: ${window.gameState.currentCycle}/${window.gameState.totalCycles}`);
+            this.cycleText.setText(`Cycle: ${this.gameState.currentCycle}/${this.gameState.totalCycles}`);
         }
         
         this.updatePlayerDisplay();
     }
     
     updatePlayerDisplay() {
-        const currentPlayer = window.gameState.players[window.gameState.currentPlayerIndex];
+        const currentPlayer = this.gameState.players[this.gameState.currentPlayerIndex];
         this.playerText.setText(`Current Player: ${currentPlayer.name}`);
         
         // Update resource display
         for (const [key, text] of Object.entries(this.resourceTexts)) {
-            text.setText(`${key.charAt(0).toUpperCase() + key.slice(1)}: ${currentPlayer.resources[key]} (${window.gameState.marketPrices[key]} gp)`);
+            text.setText(`${key.charAt(0).toUpperCase() + key.slice(1)}: ${currentPlayer.resources[key]} (${this.gameState.marketPrices[key]} gp)`);
         }
         
         // Update gold display
@@ -405,26 +430,32 @@ export default class GameScene extends Phaser.Scene {
                 // Later, we'll implement the full formula from the design doc
                 let production = 10; // Base production
                 
-                // Apply territory type modifier
-                switch (territory.type) {
-                    case 'ancient_grove':
-                        if (territory.construct.type === 'vitality_well') production += 5;
-                        break;
-                    case 'crystalline_cave':
-                        if (territory.construct.type === 'mana_conduit') production += 5;
-                        break;
-                    case 'ruined_temple':
-                        if (territory.construct.type === 'arcanum_extractor') production += 5;
-                        break;
-                    case 'volcanic_field':
-                        if (territory.construct.type === 'aether_resonator') production += 5;
-                        break;
+                // Get resource type for this construct
+                const resourceType = this.getResourceTypeForConstruct(territory.construct.type);
+                
+                // Apply territory modifiers based on config
+                const territoryModifiers = require('../config/gameConfig').TERRITORY_MODIFIERS;
+                const modifiers = territoryModifiers[territory.type];
+                
+                if (modifiers && modifiers[resourceType]) {
+                    production += production * modifiers[resourceType];
                 }
                 
                 // Add resources to player
-                const resourceType = this.getResourceTypeForConstruct(territory.construct.type);
-                territory.owner.resources[resourceType] += production;
+                territory.owner.resources[resourceType] += Math.floor(production);
             }
+        });
+        
+        // Apply resource decay
+        const decayRates = require('../config/gameConfig').DECAY_RATES;
+        this.gameState.players.forEach(player => {
+            Object.entries(decayRates).forEach(([resourceType, rate]) => {
+                if (rate > 0) {
+                    // Calculate how much is lost to decay
+                    const amountDecayed = Math.floor(player.resources[resourceType] * rate);
+                    player.resources[resourceType] -= amountDecayed;
+                }
+            });
         });
     }
     
@@ -444,7 +475,7 @@ export default class GameScene extends Phaser.Scene {
         let highestScore = 0;
         let winner = null;
         
-        window.gameState.players.forEach(player => {
+        this.gameState.players.forEach(player => {
             // Calculate score using formula from game description
             const score = 
                 player.gold * 1 +
@@ -464,43 +495,140 @@ export default class GameScene extends Phaser.Scene {
             }
         });
         
-        // Show end game screen
-        // For now, just show a message
-        this.add.rectangle(
+        // Create game over overlay
+        const overlay = this.add.rectangle(
             this.cameras.main.width / 2,
             this.cameras.main.height / 2,
-            400,
-            200,
+            this.cameras.main.width,
+            this.cameras.main.height,
             0x000000,
-            0.8
+            0.7
         );
         
+        // Create results panel
+        const resultsPanel = this.add.rectangle(
+            this.cameras.main.width / 2,
+            this.cameras.main.height / 2,
+            500,
+            400,
+            0x222244,
+            0.9
+        );
+        resultsPanel.setStrokeStyle(4, 0x4444AA);
+        
+        // Add title
         this.add.text(
             this.cameras.main.width / 2,
-            this.cameras.main.height / 2 - 40,
+            this.cameras.main.height / 2 - 150,
             'Game Over!',
             {
                 fontFamily: 'Georgia, serif',
-                fontSize: '32px',
+                fontSize: '48px',
                 color: '#FFD700',
-                align: 'center'
+                align: 'center',
+                stroke: '#000',
+                strokeThickness: 6
             }
         ).setOrigin(0.5);
         
+        // Add winner announcement
         this.add.text(
             this.cameras.main.width / 2,
-            this.cameras.main.height / 2 + 10,
+            this.cameras.main.height / 2 - 80,
             `Winner: ${winner.name}`,
             {
-                fontFamily: 'sans-serif',
-                fontSize: '24px',
+                fontFamily: 'Georgia, serif',
+                fontSize: '32px',
                 color: '#FFFFFF',
                 align: 'center'
             }
         ).setOrigin(0.5);
+        
+        // Show player scores
+        const scoreStartY = this.cameras.main.height / 2 - 20;
+        
+        this.gameState.players.forEach((player, index) => {
+            // Calculate score for this player
+            const score = 
+                player.gold * 1 +
+                player.territories.length * 50 +
+                player.constructs.length * 75 +
+                player.constructs.reduce((sum, construct) => sum + construct.level * 25, 0) +
+                (player.resources.mana + 
+                 player.resources.vitality + 
+                 player.resources.arcanum + 
+                 player.resources.aether) * 2;
+            
+            // Create score text
+            const textColor = player === winner ? '#FFD700' : '#FFFFFF';
+            this.add.text(
+                this.cameras.main.width / 2 - 180,
+                scoreStartY + (index * 40),
+                `${player.name}:`,
+                {
+                    fontFamily: 'Georgia, serif',
+                    fontSize: '24px',
+                    color: textColor,
+                    align: 'right'
+                }
+            ).setOrigin(0, 0.5);
+            
+            this.add.text(
+                this.cameras.main.width / 2 + 20,
+                scoreStartY + (index * 40),
+                `${score} points`,
+                {
+                    fontFamily: 'Georgia, serif',
+                    fontSize: '24px',
+                    color: textColor,
+                    align: 'left'
+                }
+            ).setOrigin(0, 0.5);
+        });
+        
+        // Add restart button
+        const restartButton = this.add.rectangle(
+            this.cameras.main.width / 2,
+            this.cameras.main.height / 2 + 150,
+            200,
+            50,
+            0x444466
+        );
+        restartButton.setStrokeStyle(2, 0x8888AA);
+        restartButton.setInteractive({ useHandCursor: true });
+        
+        const restartText = this.add.text(
+            this.cameras.main.width / 2,
+            this.cameras.main.height / 2 + 150,
+            'Play Again',
+            {
+                fontFamily: 'Georgia, serif',
+                fontSize: '24px',
+                color: '#FFFFFF'
+            }
+        ).setOrigin(0.5);
+        
+        // Button effects
+        restartButton.on('pointerover', () => {
+            restartButton.fillColor = 0x6666AA;
+            restartText.setColor('#FFD700');
+        });
+        
+        restartButton.on('pointerout', () => {
+            restartButton.fillColor = 0x444466;
+            restartText.setColor('#FFFFFF');
+        });
+        
+        restartButton.on('pointerdown', () => {
+            // Restart the game
+            this.scene.start('MainMenuScene');
+        });
     }
     
-    update() {
-        // Game update logic
+    update(time, delta) {
+        // Update camera controls
+        if (this.cameraControls) {
+            this.cameraControls.update(time, delta);
+        }
     }
 }
