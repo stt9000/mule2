@@ -7,13 +7,16 @@ import GameScene from '../scenes/GameScene';
 const config = {
     type: Phaser.AUTO,
     parent: 'game-container',
-    width: 1280,
-    height: 720,
+    width: 1200,  // Adjusted for two-column layout
+    height: 900,  // Increased height for better visibility
     backgroundColor: '#1a1a2d',
     scene: [BootScene, MainMenuScene, GameScene],
     scale: {
         mode: Phaser.Scale.FIT,
-        autoCenter: Phaser.Scale.CENTER_BOTH
+        autoCenter: Phaser.Scale.CENTER_LEFT  // Align to the left for two-column layout
+    },
+    dom: {
+        createContainer: true  // Enable DOM elements support
     },
     physics: {
         default: 'arcade',

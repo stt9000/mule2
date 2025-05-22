@@ -6,7 +6,7 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "build": "webpack",
     "start": "webpack serve --open",
-    "dev": "webpack serve"
+    "dev": "webpack serve --port 8080"
   },
   "keywords": [],
   "author": "",

@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Magical Frontiers - Test Runner</title>
+</head>
+<body>
+    <h1>Automated Test Runner</h1>
+    <p>This page will automatically run tests for the Magical Frontiers game.</p>
+    <div id="test-status">Loading game...</div>
+    <div id="test-results"></div>
+    
+    <script>
+        // Wait for the game to load, then run tests
+        setTimeout(() => {
+            console.log("Starting automated test execution...");
+            
+            // First, navigate to the game
+            fetch('http://localhost:8080')
+                .then(response => response.text())
+                .then(html => {
+                    // Create an iframe to load the game
+                    const iframe = document.createElement('iframe');
+                    iframe.src = 'http://localhost:8080';
+                    iframe.style.width = '100%';
+                    iframe.style.height = '600px';
+                    document.body.appendChild(iframe);
+                    
+                    // Wait for iframe to load
+                    iframe.onload = () => {
+                        document.getElementById('test-status').textContent = 'Game loaded. Starting tests in 5 seconds...';
+                        
+                        setTimeout(() => {
+                            try {
+                                // Access the iframe's window
+                                const gameWindow = iframe.contentWindow;
+                                
+                                // Check if game is loaded
+                                if (gameWindow.game && gameWindow.gameState) {
+                                    // Simulate clicking "Start Game"
+                                    if (gameWindow.game.scene.isActive('MainMenuScene')) {
+                                        gameWindow.game.scene.start('GameScene');
+                                    }
+                                    
+                                    // Wait a bit more for game scene to initialize
+                                    setTimeout(() => {
+                                        // Load and execute test script
+                                        fetch('/test-automation.js')
+                                            .then(response => response.text())
+                                            .then(testScript => {
+                                                // Execute tests in game context
+                                                const results = gameWindow.eval(testScript);
+                                                document.getElementById('test-status').textContent = 'Tests completed!';
+                                                
+                                                // Display results
+                                                const resultsDiv = document.getElementById('test-results');
+                                                resultsDiv.innerHTML = `
+                                                    <h2>Test Results</h2>
+                                                    <p><strong>Total Tests:</strong> ${results.totalTests}</p>
+                                                    <p><strong>Passed:</strong> ${results.totalPassed}</p>
+                                                    <p><strong>Failed:</strong> ${results.totalFailed}</p>
+                                                    <p><strong>Success Rate:</strong> ${((results.totalPassed/results.totalTests)*100).toFixed(1)}%</p>
+                                                `;
+                                            })
+                                            .catch(error => {
+                                                console.error('Error loading test script:', error);
+                                                document.getElementById('test-status').textContent = 'Error loading test script.';
+                                            });
+                                    }, 3000);
+                                } else {
+                                    document.getElementById('test-status').textContent = 'Game not properly loaded.';
+                                }
+                            } catch (error) {
+                                console.error('Error accessing game:', error);
+                                document.getElementById('test-status').textContent = 'Error accessing game.';
+                            }
+                        }, 5000);
+                    };
+                })
+                .catch(error => {
+                    console.error('Error loading game:', error);
+                    document.getElementById('test-status').textContent = 'Error loading game.';
+                });
+        }, 1000);
+    </script>
+</body>
+</html>

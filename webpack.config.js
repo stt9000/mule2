@@ -13,7 +13,7 @@ module.exports = {
       directory: path.join(__dirname, 'dist'),
     },
     compress: true,
-    port: 9000,
+    port: 8080,
     hot: true
   },
   module: {
@@ -27,7 +27,8 @@ module.exports = {
   plugins: [
     new HtmlWebpackPlugin({
       template: './src/index.html',
-      filename: 'index.html'
+      filename: 'index.html',
+      favicon: './favicon.ico'
     })
   ]
 };
