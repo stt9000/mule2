@@ -96,6 +96,30 @@ export default class ErrorHandler {
     }
 
     /**
+     * Handle an error (convenience method for catching exceptions)
+     * @param {Error} error - The caught error
+     * @param {string} context - Context where the error occurred
+     * @returns {Object} The error object
+     */
+    handleError(error, context = 'Unknown') {
+        const errorData = {
+            context: context,
+            stack: error.stack,
+            name: error.name
+        };
+        
+        return this.logError(ErrorHandler.errorTypes.SYSTEM, error.message, errorData);
+    }
+
+    /**
+     * Check if there are any unhandled errors
+     * @returns {boolean} True if there are unhandled errors
+     */
+    hasErrors() {
+        return this.getUnhandledErrors().length > 0;
+    }
+
+    /**
      * Mark an error as handled
      * @param {string} errorId - ID of the error to mark as handled
      */

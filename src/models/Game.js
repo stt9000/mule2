@@ -1,10 +1,10 @@
-import { RESOURCE_TYPES, BASE_PRICES, DECAY_RATES, PRODUCTION_RATES, TERRITORY_MODIFIERS, PLAYER_COLORS } from '../config/gameConfig';
-import Territory from './Territory';
-import Player from './Player';
-import Construct from './Construct';
-import Resource from './Resource';
-import Market from './Market';
-import ErrorHandler from '../utils/ErrorHandler';
+import { RESOURCE_TYPES, BASE_PRICES, DECAY_RATES, PRODUCTION_RATES, TERRITORY_MODIFIERS, PLAYER_COLORS } from '../config/gameConfig.js';
+import Territory from './Territory.js';
+import Player from './Player.js';
+import Construct from './Construct.js';
+import Resource from './Resource.js';
+import Market from './Market.js';
+import ErrorHandler from '../utils/ErrorHandler.js';
 
 /**
  * Game Model
