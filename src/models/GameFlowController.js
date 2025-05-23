@@ -3,6 +3,10 @@ import TurnManager from './TurnManager.js';
 import TimeManager from './TimeManager.js';
 import GameStateManager from './GameStateManager.js';
 import GamePersistence from './GamePersistence.js';
+import TerritoryGrid from './TerritoryGrid.js';
+import TerritoryAcquisition from './TerritoryAcquisition.js';
+import TerritoryImprovement from './TerritoryImprovement.js';
+import GoldManager from './GoldManager.js';
 import ErrorHandler from '../utils/ErrorHandler.js';
 
 /**
@@ -11,23 +15,36 @@ import ErrorHandler from '../utils/ErrorHandler.js';
  */
 export default class GameFlowController {
     constructor(config = {}) {
+        // Initialize event system first
+        this.eventListeners = {};
+        
+        // Error handling
+        this.errorHandler = new ErrorHandler();
+        
         // Initialize core systems
-        this.cycleManager = new GameCycleManager(config);
-        this.turnManager = new TurnManager([]);
+        this.cycleManager = new GameCycleManager(config, this);
+        this.turnManager = new TurnManager([], this);
         this.timeManager = new TimeManager();
         this.stateManager = new GameStateManager();
         this.persistence = new GamePersistence(config.storageType || 'localStorage');
         
-        // Error handling
-        this.errorHandler = new ErrorHandler();
+        // Initialize territory management systems
+        this.territoryGrid = new TerritoryGrid(
+            config.mapWidth || 8, 
+            config.mapHeight || 6, 
+            this
+        );
+        this.territoryAcquisition = new TerritoryAcquisition(this);
+        // TerritoryImprovement will be created per territory as needed
+        this.territoryImprovement = null;
+        
+        // Initialize economy management
+        this.goldManager = new GoldManager(this);
         
         // Game state
         this.isInitialized = false;
         this.isPaused = false;
         this.gameId = null;
-        
-        // Event system
-        this.eventListeners = {};
         
         // Integration settings
         this.autoSaveEnabled = config.autoSave !== false;
@@ -36,6 +53,11 @@ export default class GameFlowController {
         // Setup system integrations
         this.setupEventHandlers();
         this.setupSystemIntegrations();
+        
+        // Now that event system is ready, setup territory event listeners
+        if (this.territoryGrid && this.territoryGrid.setupEventListeners) {
+            this.territoryGrid.setupEventListeners();
+        }
     }
 
     /**
@@ -98,6 +120,14 @@ export default class GameFlowController {
             
             // Setup turn management
             this.turnManager.players = this.stateManager.gameState.players;
+            
+            // Initialize territory system
+            this.territoryAcquisition.initializeForCycle();
+            
+            // Store territories in game state
+            this.stateManager.updateGameState({
+                territories: this.territoryGrid.getSerializableState().territories
+            });
             
             // Save initial state
             this.stateManager.saveStateSnapshot('Game Initialized');
@@ -188,8 +218,20 @@ export default class GameFlowController {
      * Handle phase ended
      */
     onPhaseEnded(data) {
-        // Clear any active timers
-        this.timeManager.clearCurrentTimer();
+        // Clear all timers when phase ends to prevent carryover
+        console.log('Phase ending, clearing all timers');
+        this.timeManager.clearAllTimers();
+        
+        // Handle phase-specific cleanup
+        if (data.phase === 'territory_selection') {
+            // Resolve territory disputes
+            this.territoryAcquisition.resolveDisputes();
+            
+            // Broadcast event to update visuals
+            this.broadcastEvent('territories.resolved', {
+                phase: data.phase
+            });
+        }
         
         // Save phase completion snapshot
         this.stateManager.saveStateSnapshot(`End of Phase ${data.phase}`);
@@ -234,6 +276,7 @@ export default class GameFlowController {
      * Handle turn sequence ended
      */
     onTurnSequenceEnded(data) {
+        console.log('GameFlowController.onTurnSequenceEnded - advancing to next phase');
         // All players have completed their turns in this phase
         // Advance to next phase
         this.cycleManager.advancePhase();
@@ -562,6 +605,13 @@ export default class GameFlowController {
         this.turnManager.currentPlayerIndex = gameState.currentPlayerIndex;
         this.turnManager.setPhase(gameState.currentPhase);
         
+        // Restore territory system if territories exist
+        if (gameState.territories) {
+            this.territoryGrid.restoreFromState({
+                territories: gameState.territories
+            });
+        }
+        
         // Set flags
         this.isInitialized = true;
         this.gameId = gameState.gameId;
@@ -594,6 +644,10 @@ export default class GameFlowController {
             
             // Timer info
             timerInfo: this.timeManager.getTimerStatus(),
+            
+            // Territory info
+            territoryInfo: this.territoryGrid ? this.territoryGrid.getStatistics() : null,
+            acquisitionInfo: this.territoryAcquisition ? this.territoryAcquisition.getStatistics() : null,
             
             // Statistics
             statistics: this.stateManager.getStatistics()

@@ -17,6 +17,19 @@ import GameStateManager from './GameStateManager.js';
 import GamePersistence from './GamePersistence.js';
 import GameFlowController from './GameFlowController.js';
 
+// Territory management systems
+import TerritoryGrid from './TerritoryGrid.js';
+import TerritoryAcquisition from './TerritoryAcquisition.js';
+import TerritoryImprovement from './TerritoryImprovement.js';
+
+// Resource management systems
+import ResourceProductionCalculator from './ResourceProductionCalculator.js';
+import ResourceStorage from './ResourceStorage.js';
+import ResourceDecay from './ResourceDecay.js';
+
+// Economy management
+import GoldManager from './GoldManager.js';
+
 export {
     Territory,
     Construct,
@@ -29,7 +42,14 @@ export {
     TimeManager,
     GameStateManager,
     GamePersistence,
-    GameFlowController
+    GameFlowController,
+    TerritoryGrid,
+    TerritoryAcquisition,
+    TerritoryImprovement,
+    ResourceProductionCalculator,
+    ResourceStorage,
+    ResourceDecay,
+    GoldManager
 };
 
 export default {
@@ -44,5 +64,12 @@ export default {
     TimeManager,
     GameStateManager,
     GamePersistence,
-    GameFlowController
+    GameFlowController,
+    TerritoryGrid,
+    TerritoryAcquisition,
+    TerritoryImprovement,
+    ResourceProductionCalculator,
+    ResourceStorage,
+    ResourceDecay,
+    GoldManager
 };

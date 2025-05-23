@@ -1,37 +1,53 @@
 import Phaser from 'phaser';
+import { GameFlowController, Construct } from '../models/index.js';
+import { TERRITORY_COLORS, GAME_SETTINGS, PLAYER_COLORS } from '../config/gameConfig.js';
+import HexUtils from '../utils/HexUtils.js';
+import ProductionSummaryPanel from '../ui/panels/ProductionSummaryPanel.js';
 
 export default class GameScene extends Phaser.Scene {
     constructor() {
         super('GameScene');
-        this.mapSize = { width: 8, height: 6 }; // 8x6 grid of territories
-        this.hexSize = 100; // Size of hex tiles
+        this.mapSize = GAME_SETTINGS.MAP_SIZE;
+        this.hexSize = 60; // Smaller for better fit
+        this.hexUtils = new HexUtils(this.hexSize);
+        this.gameFlowController = null;
+        this.territoryGraphics = new Map(); // Map territory ID to graphics
+        this.resourceParticles = null; // Resource particle systems
+        this.resourceAnimations = []; // Active resource animations
+        this.productionSummaryPanel = null; // Production summary UI panel
+        this.selectionHighlight = null; // Territory selection highlight
+        this.selectionTween = null; // Selection animation tween
+        this.selectedTerritory = null; // Currently selected territory
     }
 
     create() {
         console.log("GameScene created");
         
-        // Initialize game state if it doesn't exist yet
-        if (!window.gameState) {
-            window.gameState = {
-                currentCycle: 1,
-                totalCycles: 12,
-                currentPlayerIndex: 0,
-                players: [],
-                marketPrices: {
-                    mana: 50,
-                    vitality: 40,
-                    arcanum: 60,
-                    aether: 70
-                },
-                TERRITORY_TYPES: {
-                    ANCIENT_GROVE: 'ancient_grove',
-                    CRYSTALLINE_CAVE: 'crystalline_cave',
-                    RUINED_TEMPLE: 'ruined_temple',
-                    MOUNTAIN_PEAK: 'mountain_peak',
-                    MARSHLAND: 'marshland',
-                    VOLCANIC_FIELD: 'volcanic_field'
-                }
-            };
+        // Initialize Game Flow Controller
+        this.gameFlowController = new GameFlowController({
+            mapWidth: this.mapSize.width,
+            mapHeight: this.mapSize.height,
+            autoSave: true
+        });
+        
+        // Set up event listeners for game flow events
+        this.setupGameFlowListeners();
+        
+        // Initialize the game with players
+        const players = this.getInitialPlayers();
+        this.gameFlowController.initializeGame(players, {
+            mapSize: this.mapSize,
+            startingGold: GAME_SETTINGS.STARTING_GOLD
+        });
+        
+        // Start the game flow (phases and turns)
+        console.log('Starting game flow...');
+        this.gameFlowController.startGameFlow();
+        
+        // Set initial phase display
+        if (this.phaseText) {
+            const initialPhase = this.gameFlowController.cycleManager?.currentPhase || 'territory_selection';
+            this.phaseText.textContent = this.formatPhase(initialPhase);
         }
         
         // Connect to DOM UI
@@ -40,14 +56,62 @@ export default class GameScene extends Phaser.Scene {
         // Create hex grid map
         this.createMap();
         
-        // Initialize players (temporary placeholder)
-        this.initializePlayers();
-        
         // Initialize game state and controls
         this.setupGameControls();
         
         // Configure camera to show the entire map
         this.setupCamera();
+        
+        // Initialize resource visualization
+        this.initializeResourceVisualization();
+        
+        // Create UI panels
+        this.productionSummaryPanel = new ProductionSummaryPanel(this);
+    }
+    
+    setupGameFlowListeners() {
+        // Listen to game flow events
+        this.gameFlowController.on('cycle.started', this.onCycleStarted.bind(this));
+        this.gameFlowController.on('phase.started', this.onPhaseStarted.bind(this));
+        this.gameFlowController.on('phase.ended', this.onPhaseEnded.bind(this));
+        this.gameFlowController.on('turn.started', this.onTurnStarted.bind(this));
+        this.gameFlowController.on('turn.ended', this.onTurnEnded.bind(this));
+        this.gameFlowController.on('timer.warning', this.onTimerWarning.bind(this));
+        this.gameFlowController.on('timer.expired', this.onTimerExpired.bind(this));
+        this.gameFlowController.on('territory.ownership_changed', this.onTerritoryOwnershipChanged.bind(this));
+        this.gameFlowController.on('territories.resolved', this.onTerritoriesResolved.bind(this));
+        
+        // Resource production events
+        this.gameFlowController.on('resource_production.started', this.onResourceProductionStarted.bind(this));
+        this.gameFlowController.on('territory.produced', this.onTerritoryProduced.bind(this));
+        this.gameFlowController.on('player.production_applied', this.onPlayerProductionApplied.bind(this));
+        this.gameFlowController.on('resource_production.completed', this.onResourceProductionCompleted.bind(this));
+        
+        // Resource decay events
+        this.gameFlowController.on('resource_decay.processing', this.onResourceDecayProcessing.bind(this));
+        this.gameFlowController.on('player.resources_decayed', this.onPlayerResourcesDecayed.bind(this));
+        this.gameFlowController.on('resource_decay.completed', this.onResourceDecayCompleted.bind(this));
+        
+        // Gold transaction events
+        this.gameFlowController.on('gold.deducted', this.onGoldDeducted.bind(this));
+        this.gameFlowController.on('gold.added', this.onGoldAdded.bind(this));
+    }
+    
+    getInitialPlayers() {
+        // Check if we have player configuration from the setup screen
+        if (window.gamePlayerConfig && window.gamePlayerConfig.length > 0) {
+            return window.gamePlayerConfig;
+        } else if (window.players && window.players.length > 0) {
+            return window.players;
+        } else {
+            // Create 4 default players for testing (Player 1 human, others AI)
+            return [
+                { id: 'player1', name: 'Player 1', color: PLAYER_COLORS[0], isAI: false },
+                { id: 'player2', name: 'Player 2', color: PLAYER_COLORS[1], isAI: true },
+                { id: 'player3', name: 'Player 3', color: PLAYER_COLORS[2], isAI: true },
+                { id: 'player4', name: 'Player 4', color: PLAYER_COLORS[3], isAI: true }
+            ];
+        }
     }
     
     // Set up camera to show the entire map
@@ -77,6 +141,7 @@ export default class GameScene extends Phaser.Scene {
         
         // Store references to DOM UI elements
         this.cycleText = document.getElementById('game-cycle');
+        this.phaseText = document.getElementById('game-phase');
         this.playerText = document.getElementById('player-name');
         this.playerColor = document.getElementById('player-color');
         this.goldText = document.getElementById('gold-display');
@@ -88,12 +153,19 @@ export default class GameScene extends Phaser.Scene {
         this.arcanumDisplay = document.getElementById('arcanum-display');
         this.aetherDisplay = document.getElementById('aether-display');
         
+        // Timer elements
+        this.timerContainer = document.getElementById('timer-container');
+        this.timerDisplay = document.getElementById('turn-timer');
+        this.turnTimerInterval = null;
+        
         console.log("UI elements found:", {
             cycleText: !!this.cycleText,
             playerText: !!this.playerText,
             playerColor: !!this.playerColor,
             goldText: !!this.goldText,
-            territoryDetails: !!this.territoryDetails
+            territoryDetails: !!this.territoryDetails,
+            timerContainer: !!this.timerContainer,
+            timerDisplay: !!this.timerDisplay
         });
         
         // Set up button event listeners
@@ -114,6 +186,7 @@ export default class GameScene extends Phaser.Scene {
         
         document.getElementById('upgrade-btn').addEventListener('click', () => {
             console.log("Upgrade territory button clicked");
+            // Always set to upgrade mode when clicked
             this.setSelectMode('upgrade');
         });
     }
@@ -145,11 +218,91 @@ export default class GameScene extends Phaser.Scene {
             }
             
             // Show a helpful message
-            this.showStatusMessage(`Click on a territory to ${mode.replace('-', ' ')}`);
+            if (mode === 'upgrade') {
+                const currentPlayer = this.gameFlowController.turnManager.getCurrentPlayer();
+                if (currentPlayer && this.gameFlowController.territoryGrid) {
+                    const territories = this.gameFlowController.territoryGrid.territories || [];
+                    const playerTerritories = territories.filter(t => 
+                        t.owner === currentPlayer.id || t.ownerId === currentPlayer.id
+                    );
+                    const upgradeableTerritories = playerTerritories.filter(t => 
+                        !t.construct || (t.construct && t.construct.level < 3)
+                    );
+                    
+                    if (upgradeableTerritories.length > 0) {
+                        this.showStatusMessage(`Click on your territories to build or upgrade constructs (${upgradeableTerritories.length} available)`);
+                    } else {
+                        this.showStatusMessage('No territories available for upgrade');
+                    }
+                } else {
+                    this.showStatusMessage('Click on a territory to upgrade');
+                }
+            } else {
+                this.showStatusMessage(`Click on a territory to ${mode.replace('-', ' ')}`);
+            }
+        }
+        
+        // Show/hide cancel upgrade button based on mode
+        this.updateUpgradeModeUI(mode);
+    }
+    
+    updateUpgradeModeUI(mode) {
+        // Create or update the upgrade mode indicator
+        let modeIndicator = document.getElementById('upgrade-mode-indicator');
+        
+        if (mode === 'upgrade') {
+            if (!modeIndicator) {
+                // Create the indicator
+                modeIndicator = document.createElement('div');
+                modeIndicator.id = 'upgrade-mode-indicator';
+                modeIndicator.style.position = 'absolute';
+                modeIndicator.style.top = '20px';
+                modeIndicator.style.left = '50%';
+                modeIndicator.style.transform = 'translateX(-50%)';
+                modeIndicator.style.backgroundColor = 'rgba(122, 138, 216, 0.9)';
+                modeIndicator.style.color = 'white';
+                modeIndicator.style.padding = '15px 30px';
+                modeIndicator.style.borderRadius = '25px';
+                modeIndicator.style.fontSize = '18px';
+                modeIndicator.style.fontWeight = 'bold';
+                modeIndicator.style.zIndex = '150';
+                modeIndicator.style.boxShadow = '0 4px 8px rgba(0,0,0,0.3)';
+                modeIndicator.style.display = 'flex';
+                modeIndicator.style.alignItems = 'center';
+                modeIndicator.style.gap = '15px';
+                
+                // Add indicator text
+                const text = document.createElement('span');
+                text.textContent = '🔨 UPGRADE MODE ACTIVE';
+                modeIndicator.appendChild(text);
+                
+                // Add cancel button
+                const cancelBtn = document.createElement('button');
+                cancelBtn.textContent = 'Exit Upgrade Mode';
+                cancelBtn.style.padding = '5px 15px';
+                cancelBtn.style.backgroundColor = '#dc3545';
+                cancelBtn.style.color = 'white';
+                cancelBtn.style.border = 'none';
+                cancelBtn.style.borderRadius = '15px';
+                cancelBtn.style.cursor = 'pointer';
+                cancelBtn.style.fontSize = '14px';
+                cancelBtn.onclick = () => {
+                    this.setSelectMode(null);
+                    this.showStatusMessage('Upgrade mode ended');
+                };
+                
+                modeIndicator.appendChild(cancelBtn);
+                document.getElementById('game-container').appendChild(modeIndicator);
+            }
+        } else {
+            // Remove the indicator
+            if (modeIndicator) {
+                modeIndicator.remove();
+            }
         }
     }
     
-    showStatusMessage(message) {
+    showStatusMessage(message, type = 'info') {
         // Create or update status message
         if (!this.statusMessage) {
             const messageContainer = document.createElement('div');
@@ -172,6 +325,18 @@ export default class GameScene extends Phaser.Scene {
         
         this.statusMessage.textContent = message;
         
+        // Apply styling based on message type
+        if (type === 'error') {
+            this.statusMessage.style.backgroundColor = 'rgba(200, 0, 0, 0.8)';
+            this.statusMessage.style.color = 'white';
+        } else if (type === 'warning') {
+            this.statusMessage.style.backgroundColor = 'rgba(200, 150, 0, 0.8)';
+            this.statusMessage.style.color = 'white';
+        } else {
+            this.statusMessage.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
+            this.statusMessage.style.color = 'white';
+        }
+        
         // Clear the message after 3 seconds
         if (this.statusMessageTimeout) {
             clearTimeout(this.statusMessageTimeout);
@@ -184,147 +349,298 @@ export default class GameScene extends Phaser.Scene {
         }, 3000);
     }
     
+    showConstructSelectionDialog(territory, callback) {
+        console.log('showConstructSelectionDialog called for territory:', territory.id);
+        // Remove any existing dialog first
+        const existingDialog = document.getElementById('construct-dialog');
+        if (existingDialog) {
+            console.log('Removing existing dialog');
+            document.getElementById('game-container').removeChild(existingDialog);
+        }
+        
+        // Create dialog container
+        const dialogContainer = document.createElement('div');
+        dialogContainer.id = 'construct-dialog';
+        dialogContainer.style.position = 'absolute';
+        dialogContainer.style.top = '50%';
+        dialogContainer.style.left = '50%';
+        dialogContainer.style.transform = 'translate(-50%, -50%)';
+        dialogContainer.style.backgroundColor = 'rgba(20, 20, 20, 0.95)';
+        dialogContainer.style.border = '2px solid #FFD700';
+        dialogContainer.style.borderRadius = '10px';
+        dialogContainer.style.padding = '20px';
+        dialogContainer.style.zIndex = '200';
+        dialogContainer.style.minWidth = '400px';
+        
+        // Title
+        const title = document.createElement('h3');
+        title.textContent = 'Select Construct Type';
+        title.style.color = '#FFD700';
+        title.style.marginBottom = '20px';
+        title.style.textAlign = 'center';
+        dialogContainer.appendChild(title);
+        
+        // Construct options
+        const constructTypes = [
+            { type: 'mana_conduit', name: 'Mana Conduit', cost: 200, description: 'Produces mana energy' },
+            { type: 'vitality_well', name: 'Vitality Well', cost: 200, description: 'Produces life essence' },
+            { type: 'arcanum_extractor', name: 'Arcanum Extractor', cost: 200, description: 'Extracts arcane materials' },
+            { type: 'aether_resonator', name: 'Aether Resonator', cost: 200, description: 'Channels rare aether' }
+        ];
+        
+        constructTypes.forEach(construct => {
+            const button = document.createElement('button');
+            button.style.display = 'block';
+            button.style.width = '100%';
+            button.style.margin = '10px 0';
+            button.style.padding = '15px';
+            button.style.backgroundColor = '#333';
+            button.style.color = 'white';
+            button.style.border = '1px solid #666';
+            button.style.borderRadius = '5px';
+            button.style.cursor = 'pointer';
+            button.style.fontSize = '16px';
+            button.style.textAlign = 'left';
+            
+            button.innerHTML = `
+                <strong>${construct.name}</strong> - ${construct.cost} gold<br>
+                <small style="color: #aaa">${construct.description}</small>
+            `;
+            
+            button.onmouseover = () => {
+                button.style.backgroundColor = '#444';
+                button.style.borderColor = '#FFD700';
+            };
+            
+            button.onmouseout = () => {
+                button.style.backgroundColor = '#333';
+                button.style.borderColor = '#666';
+            };
+            
+            button.onclick = () => {
+                console.log(`Construct button clicked: ${construct.type}`);
+                // Disable all buttons to prevent double-clicking
+                const allButtons = dialogContainer.querySelectorAll('button');
+                allButtons.forEach(btn => btn.disabled = true);
+                
+                // Remove dialog first
+                const dialog = document.getElementById('construct-dialog');
+                if (dialog && dialog.parentNode) {
+                    dialog.parentNode.removeChild(dialog);
+                }
+                // Then execute callback
+                console.log('Calling callback with:', construct.type);
+                callback(construct.type);
+            };
+            
+            dialogContainer.appendChild(button);
+        });
+        
+        // Cancel button
+        const cancelButton = document.createElement('button');
+        cancelButton.textContent = 'Cancel';
+        cancelButton.style.display = 'block';
+        cancelButton.style.width = '100%';
+        cancelButton.style.margin = '20px 0 0 0';
+        cancelButton.style.padding = '10px';
+        cancelButton.style.backgroundColor = '#600';
+        cancelButton.style.color = 'white';
+        cancelButton.style.border = 'none';
+        cancelButton.style.borderRadius = '5px';
+        cancelButton.style.cursor = 'pointer';
+        cancelButton.style.fontSize = '16px';
+        
+        cancelButton.onclick = () => {
+            const dialog = document.getElementById('construct-dialog');
+            if (dialog && dialog.parentNode) {
+                dialog.parentNode.removeChild(dialog);
+            }
+        };
+        
+        dialogContainer.appendChild(cancelButton);
+        
+        // Add to game container
+        document.getElementById('game-container').appendChild(dialogContainer);
+        
+        // Add click outside to close
+        setTimeout(() => {
+            const closeOnClickOutside = (e) => {
+                if (!dialogContainer.contains(e.target)) {
+                    const dialog = document.getElementById('construct-dialog');
+                    if (dialog && dialog.parentNode) {
+                        dialog.parentNode.removeChild(dialog);
+                    }
+                    document.removeEventListener('click', closeOnClickOutside);
+                }
+            };
+            document.addEventListener('click', closeOnClickOutside);
+        }, 100); // Small delay to prevent immediate closure
+    }
+    
     harvestResources() {
         console.log("Harvesting resources...");
         // Implement resource harvesting logic
     }
     
     createMap() {
-        this.territories = [];
+        if (!this.gameFlowController || !this.gameFlowController.territoryGrid) {
+            console.error("Game flow controller not initialized");
+            return;
+        }
         
-        // First, reduce hex size to ensure entire grid fits
-        this.hexSize = 60; // Smaller hexes for better fit
+        const territoryGrid = this.gameFlowController.territoryGrid;
         
-        // Create hex grid map using placeholder graphics
-        for (let y = 0; y < this.mapSize.height; y++) {
-            for (let x = 0; x < this.mapSize.width; x++) {
-                // Calculate hex position (using offset coordinates)
-                const xPos = x * this.hexSize * 1.5;
-                const yPos = y * this.hexSize * 0.866 * 2 + (x % 2) * this.hexSize * 0.866;
+        // Create visual representation for each territory
+        territoryGrid.territories.forEach(territory => {
+            // Get pixel position from axial coordinates
+            const pixelPos = this.hexUtils.axialToPixel(territory.q, territory.r);
+            
+            // Create hexagon graphics
+            const hex = this.add.graphics();
+            
+            // Get territory color based on type
+            const color = TERRITORY_COLORS[territory.type] || 0x888888;
+            hex.fillStyle(color, 1);
+            
+            // Draw hexagon
+            hex.lineStyle(2, 0xFFFFFF, 1);
+            
+            // Get hex corners
+            const corners = this.hexUtils.getHexCorners(territory.q, territory.r);
+            
+            // Draw filled hexagon
+            hex.beginPath();
+            hex.moveTo(corners[0].x, corners[0].y);
+            for (let i = 1; i < 6; i++) {
+                hex.lineTo(corners[i].x, corners[i].y);
+            }
+            hex.closePath();
+            hex.fillPath();
+            hex.strokePath();
+            
+            // Store graphics reference
+            this.territoryGraphics.set(territory.id, hex);
+            territory.hex = hex;
+            
+            // Make territory interactive
+            hex.setInteractive(new Phaser.Geom.Polygon(corners), Phaser.Geom.Polygon.Contains)
+               .setData('territory', territory)
+               .setData('territoryId', territory.id);
+            
+            hex.on('pointerdown', () => {
+                this.onTerritoryClick(territory);
+            });
                 
-                // Create hexagon shape for the territory
-                const territoryTypes = Object.values(window.gameState.TERRITORY_TYPES);
-                // Randomly assign territory type for now
-                const territoryType = territoryTypes[Math.floor(Math.random() * territoryTypes.length)];
-                
-                // Create hexagon graphics
-                const hex = this.add.graphics();
-                
-                // Set different colors based on territory type
-                switch (territoryType) {
-                    case 'ancient_grove':
-                        hex.fillStyle(0x228822, 1); // Green
-                        break;
-                    case 'crystalline_cave':
-                        hex.fillStyle(0x4444FF, 1); // Blue
-                        break;
-                    case 'ruined_temple':
-                        hex.fillStyle(0xCCCCAA, 1); // Tan
-                        break;
-                    case 'mountain_peak':
-                        hex.fillStyle(0x888888, 1); // Gray
-                        break;
-                    case 'marshland':
-                        hex.fillStyle(0x557733, 1); // Olive
-                        break;
-                    case 'volcanic_field':
-                        hex.fillStyle(0xAA4422, 1); // Reddish brown
-                        break;
-                }
-                
-                // Draw hexagon
-                hex.lineStyle(2, 0xFFFFFF, 1);
-                
-                // Create points for hexagon
-                const points = [];
-                for (let i = 0; i < 6; i++) {
-                    const angle = Math.PI / 3 * i;
-                    points.push({
-                        x: xPos + Math.cos(angle) * this.hexSize,
-                        y: yPos + Math.sin(angle) * this.hexSize
-                    });
-                }
-                
-                // Draw filled hexagon
-                hex.beginPath();
-                hex.moveTo(points[0].x, points[0].y);
-                for (let i = 1; i < 6; i++) {
-                    hex.lineTo(points[i].x, points[i].y);
-                }
-                hex.closePath();
-                hex.fillPath();
+            
+            hex.on('pointerover', () => {
+                // Keep owner color if territory is owned, otherwise use yellow
+                const owner = territory.ownerId ? 
+                    this.gameFlowController.stateManager.getPlayer(territory.ownerId) : null;
+                const hoverColor = owner ? owner.color : 0xFFFF00;
+                hex.lineStyle(3, hoverColor, 1);
                 hex.strokePath();
                 
-                // Store territory data
-                const territory = {
-                    id: `${x}-${y}`,
-                    type: territoryType,
-                    x: xPos,
-                    y: yPos,
-                    graphics: hex,
-                    owner: null,
-                    construct: null,
-                    improvements: []
-                };
+                // Change cursor to show it's clickable
+                this.game.canvas.style.cursor = 'pointer';
+            });
+            
+            hex.on('pointerout', () => {
+                // Reset to owner color if owned, otherwise white
+                const owner = territory.ownerId ? 
+                    this.gameFlowController.stateManager.getPlayer(territory.ownerId) : null;
+                const borderColor = owner ? owner.color : 0xFFFFFF;
+                hex.lineStyle(2, borderColor, 0.8);
+                hex.strokePath();
                 
-                this.territories.push(territory);
-                
-                // Make territory interactive - use a simpler hit area
-                // Directly make the graphics object interactive for more accurate hit detection
-                hex.setInteractive(new Phaser.Geom.Polygon(points), Phaser.Geom.Polygon.Contains)
-                   .setData('territory', territory);
-                
-                hex.on('pointerdown', () => {
-                    this.selectTerritory(territory);
-                });
-                
-                hex.on('pointerover', () => {
-                    hex.lineStyle(3, 0xFFFF00, 1);
-                    hex.strokePath();
-                    
-                    // Change cursor to show it's clickable
-                    this.game.canvas.style.cursor = 'pointer';
-                });
-                
-                hex.on('pointerout', () => {
-                    hex.lineStyle(2, 0xFFFFFF, 1);
-                    hex.strokePath();
-                    
-                    // Reset cursor
-                    this.game.canvas.style.cursor = 'default';
-                });
-            }
-        }
+                // Reset cursor
+                this.game.canvas.style.cursor = 'default';
+            });
+            
+            // Add territory type label
+            const label = this.add.text(pixelPos.x, pixelPos.y, territory.getTypeName().split(' ')[0], {
+                fontSize: '12px',
+                fill: '#FFFFFF',
+                align: 'center'
+            });
+            label.setOrigin(0.5);
+        });
+        
+        // Listen for territory events from game flow
+        this.gameFlowController.on('territory.claimed', this.onTerritoryClaimed.bind(this));
+        this.gameFlowController.on('territory.selected', this.onTerritorySelected.bind(this));
     }
     
-    selectTerritory(territory) {
-        console.log(`Selected territory at ${territory.id} of type ${territory.type}`);
+    onTerritoryClick(territory) {
+        console.log(`Clicked territory ${territory.id} of type ${territory.type}`);
         
-        // Track the time of the last territory selection to prevent accidental double selections
-        const now = Date.now();
-        if (this.lastTerritorySelectTime && now - this.lastTerritorySelectTime < 300) {
-            console.log("Preventing rapid territory selection");
-            return; // Ignore rapid selections
+        // Debug: Check game state
+        const gameStatus = this.gameFlowController.getGameStatus();
+        console.log('Game Status:', {
+            phase: gameStatus.currentPhase,
+            cycle: gameStatus.currentCycle,
+            isInitialized: gameStatus.isInitialized,
+            turnInfo: gameStatus.turnInfo
+        });
+        
+        const currentPlayer = this.gameFlowController.turnManager.getCurrentPlayer();
+        if (!currentPlayer) {
+            console.log("No current player - turn sequence may not have started");
+            // For now, allow selection without turn validation for testing
+            const firstPlayer = this.gameFlowController.stateManager.gameState.players[0];
+            if (firstPlayer) {
+                console.log("Using first player for selection:", firstPlayer.id);
+                this.gameFlowController.territoryGrid.selectTerritory(territory.id, firstPlayer.id);
+            }
+            return;
         }
-        this.lastTerritorySelectTime = now;
         
-        // Clear previous selection highlight if any
-        if (this.selectedTerritory && this.selectionHighlight) {
+        console.log("Current player:", currentPlayer.id, currentPlayer.name);
+        
+        // Use the game flow controller to select the territory
+        const selected = this.gameFlowController.territoryGrid.selectTerritory(territory.id, currentPlayer.id);
+        console.log("Selection result:", selected);
+    }
+    
+    onTerritorySelected(event) {
+        const { territory, playerId } = event;
+        console.log(`Territory ${territory.id} selected by player ${playerId}`);
+        console.log('Territory object:', territory);
+        
+        // Check if this is for the current player - ignore selections from other players
+        const currentPlayer = this.gameFlowController.turnManager.getCurrentPlayer();
+        if (currentPlayer && currentPlayer.id !== playerId) {
+            console.log(`Ignoring selection from ${playerId} - current player is ${currentPlayer.id}`);
+            return;
+        }
+        
+        // Clear previous selection highlight
+        if (this.selectionHighlight) {
             this.selectionHighlight.destroy();
         }
         
         // Store reference to selected territory
         this.selectedTerritory = territory;
         
-        // Create a selection highlight
-        const highlightPoints = [];
-        for (let i = 0; i < 6; i++) {
-            const angle = Math.PI / 3 * i;
-            highlightPoints.push({
-                x: territory.x + Math.cos(angle) * (this.hexSize + 5),
-                y: territory.y + Math.sin(angle) * (this.hexSize + 5)
-            });
+        // Check if territory has coordinates
+        if (territory.q !== undefined && territory.r !== undefined) {
+            console.log('Territory coordinates:', { q: territory.q, r: territory.r });
+        } else {
+            console.error('Territory missing q,r coordinates!');
+            return;
         }
+        
+        // Get pixel position from axial coordinates
+        const pixelPos = this.hexUtils.axialToPixel(territory.q, territory.r);
+        console.log('Pixel position:', pixelPos);
+        
+        // Create a selection highlight using hex corners
+        const highlightCorners = this.hexUtils.getHexCorners(territory.q, territory.r);
+        
+        // Scale up corners slightly for highlight effect
+        const highlightPoints = highlightCorners.map(corner => ({
+            x: pixelPos.x + (corner.x - pixelPos.x) * 1.1,
+            y: pixelPos.y + (corner.y - pixelPos.y) * 1.1
+        }));
         
         // Draw selection highlight
         this.selectionHighlight = this.add.graphics();
@@ -338,7 +654,7 @@ export default class GameScene extends Phaser.Scene {
         this.selectionHighlight.strokePath();
         
         // Add pulsing animation to the selection
-        this.tweens.add({
+        this.selectionTween = this.tweens.add({
             targets: this.selectionHighlight,
             alpha: 0.3,
             duration: 800,
@@ -348,36 +664,87 @@ export default class GameScene extends Phaser.Scene {
         
         // Update territory details in HTML UI
         if (this.territoryDetails) {
-            const constructLevel = territory.construct ? territory.construct.level : 0;
+            const owner = territory.ownerId ? 
+                this.gameFlowController.stateManager.getPlayer(territory.ownerId) : null;
             const constructInfo = territory.construct ? 
-                `${this.formatTerritoryType(territory.construct.type)} (Level ${constructLevel})` : 
+                `${this.formatTerritoryType(territory.construct.type)} (Level ${territory.construct.level || 1})` : 
                 'None';
                 
             this.territoryDetails.innerHTML = `
                 <div>
                     <p><strong>Territory ID:</strong> ${territory.id}</p>
-                    <p><strong>Type:</strong> ${this.formatTerritoryType(territory.type)}</p>
-                    <p><strong>Owner:</strong> ${territory.owner ? territory.owner.name : 'None'}</p>
+                    <p><strong>Type:</strong> ${territory.getTypeName()}</p>
+                    <p><strong>Owner:</strong> ${owner ? owner.name : 'None'}</p>
                     <p><strong>Construct:</strong> ${constructInfo}</p>
-                    ${territory.owner ? `<p><strong>Resource Production:</strong> ${this.calculateProduction(territory)} per cycle</p>` : ''}
+                    ${territory.ownerId ? `<p><strong>Resource Production:</strong> ${this.calculateTerritoryProduction(territory)} per cycle</p>` : ''}
+                    <p><strong>Base Modifiers:</strong></p>
+                    <ul>
+                        ${Object.entries(territory.baseModifiers).map(([resource, modifier]) => 
+                            `<li>${resource}: ${modifier > 1 ? '+' : ''}${Math.round((modifier - 1) * 100)}%</li>`
+                        ).join('')}
+                    </ul>
                 </div>
             `;
         }
         
         // Take action based on current selection mode
         if (this.selectMode === 'buy-land') {
-            // Only proceed if the territory doesn't already have an action in progress
-            if (!territory.actionInProgress) {
-                territory.actionInProgress = true;
-                this.buyLand(territory);
-                setTimeout(() => { territory.actionInProgress = false; }, 500); // Prevent rapid actions
+            // Use the territory acquisition system to claim the territory
+            const currentPlayer = this.gameFlowController.turnManager.getCurrentPlayer();
+            const currentPhase = this.gameFlowController.cycleManager?.currentPhase;
+            
+            console.log('Buy-land mode - Current phase:', currentPhase);
+            console.log('Current player:', currentPlayer);
+            console.log('Territory owner:', territory.ownerId);
+            
+            // Check if turn sequence has been started
+            if (!currentPlayer && currentPhase === 'territory_selection') {
+                console.log('Turn sequence not started, starting it now...');
+                this.gameFlowController.turnManager.startTurnSequence();
+                // Update current player reference
+                currentPlayer = this.gameFlowController.turnManager.getCurrentPlayer();
+                if (currentPlayer) {
+                    console.log('Turn sequence started, current player:', currentPlayer.id);
+                }
+            }
+            
+            if (currentPlayer && !territory.ownerId) {
+                // Check if it's an AI player's turn
+                if (currentPlayer.isAI) {
+                    this.showStatusMessage(`It's ${currentPlayer.name}'s turn (AI)`, 'warning');
+                    return;
+                }
+                
+                console.log('Attempting to claim territory:', territory.id);
+                const result = this.gameFlowController.territoryAcquisition.attemptClaim(currentPlayer.id, territory.id);
+                console.log('Claim result:', result);
+                
+                if (result.success) {
+                    if (result.type === 'disputed') {
+                        this.showStatusMessage('Territory selection recorded - may be disputed', 'warning');
+                    } else {
+                        this.showStatusMessage('Territory selected! Will be resolved at end of phase');
+                    }
+                } else {
+                    this.showStatusMessage(result.reason || 'Cannot claim this territory', 'error');
+                }
+            } else if (territory.ownerId) {
+                this.showStatusMessage('Territory already owned!', 'error');
+            } else if (!currentPlayer) {
+                this.showStatusMessage('No active player for claiming', 'error');
             }
         } else if (this.selectMode === 'upgrade') {
-            // Only proceed if the territory doesn't already have an action in progress
-            if (!territory.actionInProgress) {
-                territory.actionInProgress = true;
-                this.upgradeTerritory(territory);
-                setTimeout(() => { territory.actionInProgress = false; }, 500); // Prevent rapid actions
+            // Handle territory improvements
+            if (territory.ownerId === playerId) {
+                // During construct phase, place constructs
+                const currentPhase = this.gameFlowController.cycleManager?.currentPhase;
+                if (currentPhase === 'construct_outfitting') {
+                    this.upgradeTerritory(territory);
+                } else {
+                    this.showStatusMessage('You can only place constructs during the Construct Outfitting phase!', 'error');
+                }
+            } else {
+                this.showStatusMessage('You can only upgrade your own territories!', 'error');
             }
         }
     }
@@ -413,6 +780,27 @@ export default class GameScene extends Phaser.Scene {
         return type.split('_')
             .map(word => word.charAt(0).toUpperCase() + word.slice(1))
             .join(' ');
+    }
+    
+    updateTerritoryOwnership(territory) {
+        // Update the visual representation of territory ownership
+        if (!territory || !territory.hex) return;
+        
+        const owner = territory.ownerId ? 
+            this.gameFlowController.stateManager.getPlayer(territory.ownerId) : null;
+        
+        if (owner) {
+            // Update the hex border color to match player color
+            territory.hex.lineStyle(2, owner.color || 0xFF0000, 0.8);
+            territory.hex.strokePath();
+            
+            // Trigger a re-render of the hex
+            const event = {
+                territory: territory,
+                playerId: owner.id
+            };
+            this.onTerritoryOwnershipChanged(event);
+        }
     }
     
     buyLand(territory) {
@@ -499,7 +887,6 @@ export default class GameScene extends Phaser.Scene {
             
             // Update UI
             this.updatePlayerDisplay();
-            this.selectTerritory(territory); // Refresh territory details
             
             // Show success message
             this.showStatusMessage(`${currentPlayer.name} bought territory ${territory.id} for ${cost} gold`);
@@ -515,12 +902,24 @@ export default class GameScene extends Phaser.Scene {
     
     upgradeTerritory(territory) {
         console.log(`=== UPGRADE TERRITORY FUNCTION START ===`);
-        const currentPlayer = window.gameState.players[window.gameState.currentPlayerIndex];
+        
+        // Check if dialog is already open
+        if (document.getElementById('construct-dialog')) {
+            console.log('Construct dialog already open, ignoring click');
+            return;
+        }
+        
+        const currentPlayer = this.gameFlowController.turnManager.getCurrentPlayer();
+        
+        if (!currentPlayer) {
+            this.showStatusMessage("No active player!");
+            return;
+        }
         
         // Check if player owns this territory
-        if (!territory.owner || territory.owner !== currentPlayer) {
+        if (!territory.ownerId || territory.ownerId !== currentPlayer.id) {
             this.showStatusMessage("You don't own this territory!");
-            console.log(`Player doesn't own territory, can't upgrade`);
+            console.log(`Player ${currentPlayer.id} doesn't own territory ${territory.id} (owned by ${territory.ownerId})`);
             return;
         }
         
@@ -531,27 +930,43 @@ export default class GameScene extends Phaser.Scene {
         if (buildingNew) {
             // BUILDING NEW CONSTRUCT
             
-            // Determine construct type based on territory
-            const constructType = this.getDefaultConstructType(territory.type);
-            const buildCost = 200; // Fixed cost for new constructs
-            
-            console.log(`Building new ${constructType} (cost: ${buildCost}, player gold: ${currentPlayer.gold})`);
-            
-            if (currentPlayer.gold >= buildCost) {
+            // Show construct selection dialog
+            console.log('About to show construct selection dialog');
+            this.showConstructSelectionDialog(territory, (selectedType) => {
+                console.log('Construct selection callback called with:', selectedType);
+                const constructType = selectedType;
+                const buildCost = 200; // Fixed cost for new constructs
+                
+                // Re-fetch current player in case state changed
+                const updatedPlayer = this.gameFlowController.turnManager.getCurrentPlayer();
+                
+                console.log(`Building new ${constructType} (cost: ${buildCost}, player gold: ${updatedPlayer.gold})`);
+                
+                if (updatedPlayer.gold >= buildCost) {
                 console.log(`Player has enough gold to build`);
                 
-                // Deduct gold from player
-                currentPlayer.gold -= buildCost;
+                // Deduct gold using GoldManager
+                const goldResult = this.gameFlowController.goldManager.deductGold(
+                    updatedPlayer.id, 
+                    buildCost, 
+                    `Build ${constructType}`
+                );
                 
-                // Create the construct data object
-                const newConstruct = {
+                if (!goldResult.success) {
+                    this.showStatusMessage(goldResult.error, 'error');
+                    return;
+                }
+                
+                // Create the construct using the Construct class
+                const newConstruct = new Construct({
+                    id: `construct_${territory.id}_${Date.now()}`,
                     type: constructType,
-                    level: 1
-                };
+                    level: 1,
+                    owner: updatedPlayer
+                });
                 
-                // Store the construct on territory and player
+                // Store the construct on territory
                 territory.construct = newConstruct;
-                currentPlayer.constructs.push(newConstruct);
                 
                 console.log(`Created new construct of type ${constructType} at level 1`);
                 
@@ -563,13 +978,16 @@ export default class GameScene extends Phaser.Scene {
                     territory.constructText.destroy();
                 }
                 
+                // Get pixel position for the territory
+                const pixelPos = this.hexUtils.axialToPixel(territory.q, territory.r);
+                
                 // Create visual representation
                 const constructGraphic = this.add.graphics();
                 constructGraphic.fillStyle(0xFFFFFF, 0.8);
-                constructGraphic.fillCircle(territory.x, territory.y, this.hexSize / 3);
+                constructGraphic.fillCircle(pixelPos.x, pixelPos.y, this.hexSize / 3);
                 
                 // Create level text
-                const constructText = this.add.text(territory.x, territory.y, "1", {
+                const constructText = this.add.text(pixelPos.x, pixelPos.y, "1", {
                     font: '24px Arial',
                     fill: '#000000'
                 }).setOrigin(0.5);
@@ -589,13 +1007,28 @@ export default class GameScene extends Phaser.Scene {
                 
                 // Update UI
                 this.updatePlayerDisplay();
-                this.selectTerritory(territory); // Refresh territory details
                 
                 this.showStatusMessage(`Built ${this.formatTerritoryType(constructType)} on territory ${territory.id} for ${buildCost} gold`);
+                
+                // Update available territories count
+                this.time.delayedCall(100, () => {
+                    this.setSelectMode('upgrade'); // Refresh the message with updated count
+                });
+                
+                // Execute the action through turn manager
+                this.gameFlowController.turnManager.executePlayerAction(updatedPlayer, {
+                    type: 'place_construct',
+                    target: territory.id,
+                    constructType: constructType
+                });
             } else {
-                console.log(`Not enough gold to build (need ${buildCost}, have ${currentPlayer.gold})`);
+                console.log(`Not enough gold to build (need ${buildCost}, have ${updatedPlayer.gold})`);
                 this.showStatusMessage(`Not enough gold to build! You need ${buildCost} gold.`);
             }
+            }); // End of construct selection callback
+            
+            // Return early - dialog is handling the rest
+            return;
         } else {
             // UPGRADING EXISTING CONSTRUCT
             
@@ -629,8 +1062,17 @@ export default class GameScene extends Phaser.Scene {
             // Everything is fine, proceed with upgrade
             console.log(`Proceeding with upgrade from ${currentLevel} to ${currentLevel + 1}`);
             
-            // Deduct gold
-            currentPlayer.gold -= upgradeCost;
+            // Deduct gold using GoldManager
+            const goldResult = this.gameFlowController.goldManager.deductGold(
+                currentPlayer.id, 
+                upgradeCost, 
+                `Upgrade construct to level ${currentLevel + 1}`
+            );
+            
+            if (!goldResult.success) {
+                this.showStatusMessage(goldResult.error, 'error');
+                return;
+            }
             
             // Increment level by exactly one
             territory.construct.level = currentLevel + 1;
@@ -659,15 +1101,34 @@ export default class GameScene extends Phaser.Scene {
             
             // Update UI
             this.updatePlayerDisplay();
-            this.selectTerritory(territory); // Refresh territory details
             
             this.showStatusMessage(`Upgraded construct to level ${newLevel} for ${upgradeCost} gold`);
+            
+            // Update available territories count
+            this.time.delayedCall(100, () => {
+                this.setSelectMode('upgrade'); // Refresh the message with updated count
+            });
+            
+            // Execute the action through turn manager
+            this.gameFlowController.turnManager.executePlayerAction(currentPlayer, {
+                type: 'upgrade_construct',
+                target: territory.id,
+                newLevel: newLevel
+            });
+            // Don't reset selection mode - allow multiple upgrades
+            console.log(`=== UPGRADE TERRITORY FUNCTION END (upgrade existing) ===`);
+            // Keep selection mode active to allow multiple upgrades
+            
+            // Show helpful message to continue
+            this.time.delayedCall(500, () => {
+                const currentPlayer = this.gameFlowController.turnManager.getCurrentPlayer();
+                if (currentPlayer && currentPlayer.gold >= 150) {
+                    this.showStatusMessage('Click another territory to continue upgrading, or click "Cancel Upgrade" to finish');
+                } else if (currentPlayer && currentPlayer.gold < 150) {
+                    this.showStatusMessage('Not enough gold for more upgrades. Click "Cancel Upgrade" to finish');
+                }
+            });
         }
-        
-        // Reset selection mode
-        console.log(`=== UPGRADE TERRITORY FUNCTION END ===`);
-        this.selectMode = null;
-        this.setSelectMode(null);
     }
     
     getDefaultConstructType(territoryType) {
@@ -851,6 +1312,8 @@ export default class GameScene extends Phaser.Scene {
     }
     
     nextTurn() {
+        console.log('nextTurn called');
+        
         // Visual feedback for button press
         const endTurnBtn = document.getElementById('end-turn-btn');
         if (endTurnBtn) {
@@ -862,27 +1325,20 @@ export default class GameScene extends Phaser.Scene {
             }, 200);
         }
         
-        // Advance to next player
-        window.gameState.currentPlayerIndex = (window.gameState.currentPlayerIndex + 1) % window.gameState.players.length;
-        
-        // If we've gone through all players, advance to next cycle
-        if (window.gameState.currentPlayerIndex === 0) {
-            window.gameState.currentCycle++;
-            
-            if (window.gameState.currentCycle > window.gameState.totalCycles) {
-                this.endGame();
-                return;
+        // Use the GameFlowController to advance turn
+        if (this.gameFlowController && this.gameFlowController.turnManager) {
+            const currentPlayer = this.gameFlowController.turnManager.getCurrentPlayer();
+            if (currentPlayer) {
+                console.log('Ending turn for player:', currentPlayer.id);
+                this.gameFlowController.turnManager.endPlayerTurn(currentPlayer);
+            } else {
+                console.error('No current player found');
+                this.showStatusMessage('No active player turn', 'error');
             }
-            
-            // Produce resources for all territories
-            this.produceResources();
-            
-            // Show cycle notification
-            this.showStatusMessage(`Starting Cycle ${window.gameState.currentCycle}!`);
         } else {
-            // Show player turn notification
-            const currentPlayer = window.gameState.players[window.gameState.currentPlayerIndex];
-            this.showStatusMessage(`${currentPlayer.name}'s turn!`);
+            console.error('GameFlowController or TurnManager not available');
+            this.showStatusMessage('Cannot end turn - game not properly initialized', 'error');
+            return;
         }
         
         // Update display
@@ -893,28 +1349,33 @@ export default class GameScene extends Phaser.Scene {
         this.setSelectMode(null); // This will reset button highlights
         
         // Clear territory selection
-        if (this.selectedTerritory && this.selectionHighlight) {
-            this.selectionHighlight.destroy();
-            this.selectedTerritory = null;
-            
-            // Reset territory details
-            if (this.territoryDetails) {
-                this.territoryDetails.innerHTML = '<p>No territory selected</p>';
-            }
-        }
+        this.clearTerritorySelection();
     }
     
     updatePlayerDisplay() {
-        // Update UI with current player info
-        if (!window.gameState || !window.gameState.players) {
-            console.error("Game state or players not initialized");
+        // Update UI with current player info using GameFlowController
+        if (!this.gameFlowController) {
+            console.error("GameFlowController not initialized");
             return;
         }
         
-        const currentPlayer = window.gameState.players[window.gameState.currentPlayerIndex];
+        const currentPlayerFromTurn = this.gameFlowController.turnManager.getCurrentPlayer();
+        if (!currentPlayerFromTurn) {
+            console.error("No current player found");
+            return;
+        }
         
-        if (this.cycleText) {
-            this.cycleText.textContent = `${window.gameState.currentCycle}`;
+        // Get fresh player data from state manager to ensure we have latest gold values
+        const currentPlayer = this.gameFlowController.stateManager.getPlayer(currentPlayerFromTurn.id);
+        if (!currentPlayer) {
+            console.error("Player not found in state manager");
+            return;
+        }
+        
+        const gameState = this.gameFlowController.stateManager.gameState;
+        
+        if (this.cycleText && gameState) {
+            this.cycleText.textContent = `${gameState.currentCycle || 1}`;
         }
         
         if (this.playerText) {
@@ -928,24 +1389,24 @@ export default class GameScene extends Phaser.Scene {
         }
         
         if (this.goldText) {
-            this.goldText.textContent = currentPlayer.gold;
+            this.goldText.textContent = currentPlayer.gold || 0;
         }
         
-        // Update resource displays
+        // Update resource displays - check if resources exist
         if (this.manaDisplay) {
-            this.manaDisplay.textContent = currentPlayer.resources.mana;
+            this.manaDisplay.textContent = currentPlayer.resources?.mana || 0;
         }
         
         if (this.vitalityDisplay) {
-            this.vitalityDisplay.textContent = currentPlayer.resources.vitality;
+            this.vitalityDisplay.textContent = currentPlayer.resources?.vitality || 0;
         }
         
         if (this.arcanumDisplay) {
-            this.arcanumDisplay.textContent = currentPlayer.resources.arcanum;
+            this.arcanumDisplay.textContent = currentPlayer.resources?.arcanum || 0;
         }
         
         if (this.aetherDisplay) {
-            this.aetherDisplay.textContent = currentPlayer.resources.aether;
+            this.aetherDisplay.textContent = currentPlayer.resources?.aether || 0;
         }
     }
     
@@ -1208,5 +1669,987 @@ export default class GameScene extends Phaser.Scene {
     
     update() {
         // Game update logic
+    }
+    
+    // Game Flow Event Handlers
+    onCycleStarted(event) {
+        const { cycle } = event;
+        if (this.cycleText) {
+            this.cycleText.textContent = `Cycle ${cycle} of ${GAME_SETTINGS.TOTAL_CYCLES}`;
+        }
+    }
+    
+    onPhaseStarted(event) {
+        const { phase } = event;
+        const formattedPhase = this.formatPhase(phase);
+        
+        // Clear any pending AI turn end timer when phase changes
+        if (this.aiTurnEndTimer) {
+            console.log('Phase change - clearing pending AI turn end timer');
+            this.aiTurnEndTimer.remove();
+            this.aiTurnEndTimer = null;
+        }
+        
+        // Update phase display in UI
+        if (this.phaseText) {
+            this.phaseText.textContent = formattedPhase;
+        }
+        
+        this.showStatusMessage(`Phase: ${formattedPhase}`);
+        
+        // Don't automatically select mode - let player choose
+        // Clear any previous selection mode
+        this.setSelectMode(null);
+    }
+    
+    onPhaseEnded(event) {
+        const { phase } = event;
+        console.log('Phase ended:', phase);
+        
+        // Special handling for end of territory selection phase
+        if (phase === 'territory_selection') {
+            console.log('Territory selection phase ended - checking for resolved territories');
+            
+            // Force a visual update of all territories after dispute resolution
+            this.time.delayedCall(500, () => {
+                this.updateAllTerritoryVisuals();
+            });
+        }
+    }
+    
+    onTurnStarted(event) {
+        const { player } = event;
+        console.log('onTurnStarted called for player:', player.id);
+        
+        // Clear any pending AI turn end timer
+        if (this.aiTurnEndTimer) {
+            console.log('Clearing pending AI turn end timer');
+            this.aiTurnEndTimer.remove();
+            this.aiTurnEndTimer = null;
+        }
+        
+        // Remove any open construct dialog when turn changes
+        const existingDialog = document.getElementById('construct-dialog');
+        if (existingDialog) {
+            console.log('Removing construct dialog on turn change');
+            existingDialog.parentNode.removeChild(existingDialog);
+        }
+        
+        // Clear any active selection modes when turn changes
+        console.log('Clearing selection mode...');
+        this.setSelectMode(null);
+        
+        // Clear territory selection
+        console.log('Clearing territory selection...');
+        this.clearTerritorySelection();
+        
+        this.updatePlayerDisplay();
+        this.showStatusMessage(`${player.name}'s turn!`);
+        
+        // Start turn timer
+        this.startTurnTimer(player);
+        
+        const currentPhase = this.gameFlowController.cycleManager?.currentPhase;
+        
+        // If it's an AI player's turn, handle AI actions based on phase
+        if (player.isAI) {
+            if (currentPhase === 'territory_selection') {
+                console.log('AI player turn - making territory selection');
+                // Give more time for turn to properly start before AI acts
+                this.time.delayedCall(2000, () => {
+                    this.makeAITerritorySelection(player);
+                });
+            } else if (currentPhase === 'construct_outfitting') {
+                console.log('AI player turn - placing constructs');
+                // Give more time for turn to properly start before AI acts
+                this.time.delayedCall(2000, () => {
+                    this.makeAIConstructPlacement(player);
+                });
+            } else {
+                // For other phases, just end turn
+                this.time.delayedCall(1000, () => {
+                    this.nextTurn();
+                });
+            }
+        } else {
+            // Human player's turn - provide instructions based on phase
+            if (currentPhase === 'territory_selection') {
+                this.showStatusMessage('Select a territory to claim (click Buy Land first)');
+                // Make sure Buy Land button is enabled
+                const buyLandBtn = document.getElementById('buy-land-btn');
+                if (buyLandBtn) {
+                    buyLandBtn.disabled = false;
+                }
+            } else if (currentPhase === 'construct_outfitting') {
+                // Check if player has territories and gold
+                const playerTerritories = this.gameFlowController.territoryGrid?.getPlayerTerritories(player.id) || [];
+                const hasGold = player.gold >= 200;
+                
+                if (playerTerritories.length === 0) {
+                    this.showStatusMessage('You have no territories. Click End Turn to continue.');
+                } else if (!hasGold) {
+                    this.showStatusMessage('Not enough gold for constructs (need 200). Click End Turn.');
+                } else {
+                    this.showStatusMessage('Click Upgrade Territory, then click your territories to build constructs (200 gold each)');
+                    // Enable the upgrade button
+                    const upgradeBtn = document.getElementById('upgrade-btn');
+                    if (upgradeBtn) {
+                        upgradeBtn.disabled = false;
+                    }
+                }
+            } else if (currentPhase === 'auction_phase') {
+                this.showStatusMessage('Auction phase - bidding coming soon. Click End Turn.');
+            } else if (currentPhase === 'resource_production' || currentPhase === 'end_cycle_events') {
+                // Automated phases - end turn automatically
+                this.showStatusMessage('Automated phase - processing...');
+                this.time.delayedCall(1000, () => {
+                    this.nextTurn();
+                });
+            }
+        }
+    }
+    
+    onTurnEnded(event) {
+        // Stop the turn timer when turn ends
+        this.stopTurnTimer();
+    }
+    
+    onTimerWarning(event) {
+        const { remainingTime, urgencyLevel } = event;
+        if (urgencyLevel === 'critical') {
+            this.showStatusMessage(`WARNING: ${remainingTime} seconds remaining!`, 'warning');
+        }
+    }
+    
+    onTimerExpired(event) {
+        this.showStatusMessage('Time expired! Turn ending...', 'error');
+    }
+    
+    onTerritoryOwnershipChanged(event) {
+        const { territoryId, newOwner } = event;
+        const territory = this.gameFlowController.territoryGrid.getTerritoryById(territoryId);
+        
+        if (territory && territory.hex) {
+            const owner = this.gameFlowController.stateManager.getPlayer(newOwner);
+            if (owner) {
+                // Update the hex border to show ownership
+                territory.hex.lineStyle(2, owner.color, 0.8);
+                territory.hex.strokePath();
+            }
+        }
+    }
+    
+    onTerritoriesResolved(event) {
+        console.log('Territories resolved, updating all territory visuals');
+        this.updateAllTerritoryVisuals();
+        this.showStatusMessage('Territory disputes resolved!');
+    }
+    
+    updateAllTerritoryVisuals() {
+        // Update all territory visuals to show ownership
+        const territories = this.gameFlowController.territoryGrid?.territories || [];
+        territories.forEach(territory => {
+            if (territory.ownerId && territory.hex) {
+                const owner = this.gameFlowController.stateManager.getPlayer(territory.ownerId);
+                if (owner) {
+                    territory.hex.lineStyle(2, owner.color, 0.8);
+                    territory.hex.strokePath();
+                    
+                    // Add ownership marker if not already present
+                    if (!territory.ownershipMarker) {
+                        const pixelPos = this.hexUtils.axialToPixel(territory.q, territory.r);
+                        territory.ownershipMarker = this.add.circle(pixelPos.x, pixelPos.y, this.hexSize / 4, owner.color);
+                    }
+                }
+            }
+        });
+    }
+    
+    onTerritoryClaimed(event) {
+        const { territoryId, newOwner } = event;
+        const territory = this.gameFlowController.territoryGrid.getTerritoryById(territoryId);
+        if (territory && territory.hex) {
+            // Update visual to show ownership
+            this.updateTerritoryVisual(territory);
+        }
+    }
+    
+    updateTerritoryVisual(territory) {
+        if (!territory.hex) return;
+        
+        const owner = this.gameFlowController.stateManager.getPlayer(territory.ownerId);
+        if (owner) {
+            // Add owner indicator
+            territory.hex.lineStyle(4, owner.color || 0xFFFFFF, 1);
+            territory.hex.strokePath();
+        }
+    }
+    
+    // Removed duplicate method - using the no-parameter version above
+    
+    formatPhase(phase) {
+        return phase.split('_').map(word => 
+            word.charAt(0).toUpperCase() + word.slice(1)
+        ).join(' ');
+    }
+    
+    clearTerritorySelection() {
+        console.log('clearTerritorySelection called - selectedTerritory:', !!this.selectedTerritory, 'selectionHighlight:', !!this.selectionHighlight);
+        
+        // Clear selection in TerritoryGrid
+        if (this.gameFlowController && this.gameFlowController.territoryGrid) {
+            this.gameFlowController.territoryGrid.clearSelection();
+        }
+        
+        // Stop the tween animation if it exists
+        if (this.selectionTween) {
+            this.selectionTween.stop();
+            this.selectionTween = null;
+        }
+        
+        // Always try to clear the highlight if it exists
+        if (this.selectionHighlight) {
+            this.selectionHighlight.destroy();
+            this.selectionHighlight = null;
+        }
+        
+        // Clear selected territory
+        this.selectedTerritory = null;
+        
+        // Reset territory details
+        if (this.territoryDetails) {
+            this.territoryDetails.innerHTML = '<p>No territory selected</p>';
+        }
+    }
+    
+    makeAITerritorySelection(player) {
+        console.log(`AI ${player.name} selecting territory...`);
+        
+        // Get all unowned territories
+        const territories = this.gameFlowController.territoryGrid?.territories || [];
+        const unownedTerritories = territories.filter(t => !t.ownerId);
+        
+        if (unownedTerritories.length === 0) {
+            console.log('No unowned territories available');
+            // End turn immediately if no territories available
+            this.nextTurn();
+            return;
+        }
+        
+        // Sort territories by value (AI prefers higher value territories)
+        const sortedTerritories = unownedTerritories.sort((a, b) => {
+            const aValue = a.getWorth ? a.getWorth() : 100;
+            const bValue = b.getWorth ? b.getWorth() : 100;
+            return bValue - aValue;
+        });
+        
+        // Select one of the top 3 territories randomly
+        const topTerritories = sortedTerritories.slice(0, Math.min(3, sortedTerritories.length));
+        const selectedTerritory = topTerritories[Math.floor(Math.random() * topTerritories.length)];
+        
+        console.log(`AI ${player.name} selected territory ${selectedTerritory.id} (worth: ${selectedTerritory.getWorth ? selectedTerritory.getWorth() : 'unknown'})`);
+        
+        // Make the selection
+        const result = this.gameFlowController.territoryAcquisition.attemptClaim(player.id, selectedTerritory.id);
+        
+        if (result.success) {
+            // Get territory type for better message
+            const territoryType = selectedTerritory.type ? 
+                this.formatTerritoryType(selectedTerritory.type) : 
+                'territory';
+            
+            this.showStatusMessage(`${player.name} claimed ${territoryType} at ${selectedTerritory.id}`, 'info');
+            
+            // Visual feedback - briefly highlight the selected territory
+            if (selectedTerritory.hex) {
+                selectedTerritory.hex.lineStyle(4, player.color, 1);
+                selectedTerritory.hex.strokePath();
+                
+                this.time.delayedCall(800, () => {
+                    selectedTerritory.hex.lineStyle(2, player.color, 0.8);
+                    selectedTerritory.hex.strokePath();
+                });
+            }
+            
+            // End turn after a delay - store the timer so we can cancel it if needed
+            if (this.aiTurnEndTimer) {
+                this.aiTurnEndTimer.remove();
+            }
+            this.aiTurnEndTimer = this.time.delayedCall(2000, () => {
+                const currentPhase = this.gameFlowController?.cycleManager?.currentPhase;
+                console.log(`AI ${player.name} ending turn after territory selection - current phase: ${currentPhase}`);
+                // Only call nextTurn if we're still in the same phase
+                if (currentPhase === 'territory_selection') {
+                    this.nextTurn();
+                } else {
+                    console.log(`Phase has changed to ${currentPhase}, not calling nextTurn`);
+                }
+                this.aiTurnEndTimer = null;
+            });
+        } else {
+            console.log(`AI ${player.name} failed to select territory, ending turn`);
+            // If selection failed, end turn immediately
+            this.nextTurn();
+        }
+    }
+    
+    makeAIConstructPlacement(player) {
+        console.log(`AI ${player.name} placing constructs...`);
+        
+        // Track AI actions for summary
+        const aiActions = [];
+        
+        // Get player's territories without constructs
+        const playerTerritories = this.gameFlowController.territoryGrid?.getPlayerTerritories(player.id) || [];
+        const emptyTerritories = playerTerritories.filter(t => !t.construct);
+        
+        if (emptyTerritories.length === 0) {
+            console.log('No territories without constructs');
+            this.showStatusMessage(`${player.name} has no empty territories for constructs`);
+            this.time.delayedCall(2000, () => {
+                this.nextTurn();
+            });
+            return;
+        }
+        
+        // Check if player has enough gold (200 for basic construct)
+        if (player.gold < 200) {
+            console.log(`${player.name} doesn't have enough gold for constructs`);
+            this.showStatusMessage(`${player.name} has insufficient gold for constructs (needs 200)`);
+            this.time.delayedCall(2000, () => {
+                this.nextTurn();
+            });
+            return;
+        }
+        
+        // AI strategy: Try to build multiple constructs if possible
+        let constructsBuilt = 0;
+        const maxConstructs = Math.min(3, Math.floor(player.gold / 200), emptyTerritories.length);
+        
+        // Shuffle territories for variety
+        const shuffledTerritories = [...emptyTerritories].sort(() => Math.random() - 0.5);
+        
+        for (let i = 0; i < maxConstructs; i++) {
+            if (player.gold < 200) break;
+            
+            const selectedTerritory = shuffledTerritories[i];
+            console.log(`AI ${player.name} attempting to build construct on territory ${selectedTerritory.id}`);
+            
+            // Place construct and track the action
+            const constructType = this.getDefaultConstructType(selectedTerritory.type);
+            const success = this.placeAIConstruct(player, selectedTerritory);
+            
+            if (success) {
+                constructsBuilt++;
+                const territoryType = this.formatTerritoryType(selectedTerritory.type);
+                aiActions.push(`Built ${this.formatTerritoryType(constructType)} on ${territoryType}`);
+                
+                // Visual feedback
+                if (selectedTerritory.hex) {
+                    selectedTerritory.hex.lineStyle(4, player.color, 1);
+                    selectedTerritory.hex.strokePath();
+                    
+                    this.time.delayedCall(800, () => {
+                        selectedTerritory.hex.lineStyle(2, player.color, 0.8);
+                        selectedTerritory.hex.strokePath();
+                    });
+                }
+            }
+        }
+        
+        // Show summary of AI actions
+        if (aiActions.length > 0) {
+            const summary = `${player.name}: ${aiActions.join(', ')}`;
+            this.showStatusMessage(summary, 'info');
+        } else {
+            this.showStatusMessage(`${player.name} built no constructs this turn`);
+        }
+        
+        // End turn after showing actions - store the timer so we can cancel it if needed
+        if (this.aiTurnEndTimer) {
+            this.aiTurnEndTimer.remove();
+        }
+        this.aiTurnEndTimer = this.time.delayedCall(3000, () => {
+            console.log(`AI ${player.name} ending turn after construct placement`);
+            // Only call nextTurn if we're still in the same phase
+            if (this.gameFlowController?.cycleManager?.currentPhase === 'construct_outfitting') {
+                this.nextTurn();
+            } else {
+                console.log('Phase has changed, not calling nextTurn');
+            }
+            this.aiTurnEndTimer = null;
+        });
+    }
+    
+    placeAIConstruct(player, territory) {
+        console.log(`AI placing construct for ${player.name} on territory ${territory.id}`);
+        
+        // Determine construct type based on territory
+        const constructType = this.getDefaultConstructType(territory.type);
+        const buildCost = 200;
+        
+        // Deduct gold using GoldManager
+        const goldResult = this.gameFlowController.goldManager.deductGold(
+            player.id, 
+            buildCost, 
+            `AI Build ${constructType}`
+        );
+        
+        if (!goldResult.success) {
+            console.log(`AI failed to deduct gold: ${goldResult.error}`);
+            return false;
+        }
+        
+        // Create the construct using the Construct class
+        const newConstruct = new Construct({
+            id: `construct_${territory.id}_${Date.now()}`,
+            type: constructType,
+            level: 1,
+            owner: player
+        });
+        
+        // Store the construct on territory
+        territory.construct = newConstruct;
+        
+        console.log(`AI created ${constructType} on territory ${territory.id}`);
+        
+        // Create visual representation
+        const pixelPos = this.hexUtils.axialToPixel(territory.q, territory.r);
+        
+        // Clean up any existing visuals
+        if (territory.constructGraphic) {
+            territory.constructGraphic.destroy();
+        }
+        if (territory.constructText) {
+            territory.constructText.destroy();
+        }
+        
+        const constructGraphic = this.add.graphics();
+        constructGraphic.fillStyle(0xFFFFFF, 0.8);
+        constructGraphic.fillCircle(pixelPos.x, pixelPos.y, this.hexSize / 3);
+        
+        const constructText = this.add.text(pixelPos.x, pixelPos.y, "1", {
+            font: '24px Arial',
+            fill: '#000000'
+        }).setOrigin(0.5);
+        
+        territory.constructGraphic = constructGraphic;
+        territory.constructText = constructText;
+        
+        // Execute the action through turn manager
+        this.gameFlowController.turnManager.executePlayerAction(player, {
+            type: 'place_construct',
+            target: territory.id,
+            constructType: constructType
+        });
+        
+        // Return success
+        return true;
+    }
+    
+    calculateTerritoryProduction(territory) {
+        if (!territory.construct) return 0;
+        
+        const production = territory.calculateProductionSummary();
+        return production ? production.amount : 0;
+    }
+    
+    showImprovementOptions(territory) {
+        console.log('Show improvement options for territory:', territory.id);
+        
+        const currentPlayer = this.gameFlowController.turnManager.getCurrentPlayer();
+        if (!currentPlayer) return;
+        
+        // Check if territory already has a construct
+        if (territory.construct) {
+            this.showStatusMessage('This territory already has a construct!', 'warning');
+            return;
+        }
+        
+        // Check if player has enough gold (200 for basic construct)
+        if (currentPlayer.gold < 200) {
+            this.showStatusMessage('Not enough gold! You need 200 gold to build a construct.', 'error');
+            return;
+        }
+        
+        // Determine construct type based on territory type
+        const constructType = this.getDefaultConstructType(territory.type);
+        
+        // Ask for confirmation
+        const confirmMessage = `Build ${this.formatTerritoryType(constructType)} for 200 gold?`;
+        
+        // For now, auto-build (in a full implementation, you'd show a UI)
+        console.log(confirmMessage);
+        
+        // Build the construct
+        const construct = {
+            type: constructType,
+            level: 1,
+            ownerId: currentPlayer.id
+        };
+        
+        if (territory.placeConstruct) {
+            // Use the action system to place the construct
+            const action = {
+                type: 'place_construct',
+                target: territory.id,
+                constructType: constructType,
+                cost: 200
+            };
+            
+            // Execute the action through the turn manager
+            const success = this.gameFlowController.turnManager.executePlayerAction(currentPlayer, action);
+            
+            if (success) {
+                // Place the construct
+                territory.placeConstruct(construct);
+                
+                // Deduct gold
+                currentPlayer.gold -= 200;
+                
+                // Update displays
+                this.updatePlayerDisplay();
+                
+                // Add visual feedback
+                const pixelPos = this.hexUtils.axialToPixel(territory.q, territory.r);
+                const constructIcon = this.add.circle(pixelPos.x, pixelPos.y - 10, 8, 0xFFD700);
+                constructIcon.setStrokeStyle(2, 0x000000);
+                
+                // Add level text
+                const levelText = this.add.text(pixelPos.x, pixelPos.y - 10, '1', {
+                    fontSize: '12px',
+                    color: '#000000',
+                    fontWeight: 'bold'
+                });
+                levelText.setOrigin(0.5);
+                
+                territory.constructVisual = constructIcon;
+                territory.constructText = levelText;
+                
+                this.showStatusMessage(`Built ${this.formatTerritoryType(constructType)} on ${territory.id}!`);
+                
+                // Reset select mode
+                this.selectMode = null;
+                this.setSelectMode(null);
+            } else {
+                this.showStatusMessage('Cannot place construct - action failed', 'error');
+            }
+        }
+    }
+    
+    startTurnTimer(player) {
+        console.log('startTurnTimer called for player:', player.id);
+        
+        // Clear any existing timer
+        this.stopTurnTimer();
+        
+        // Don't show timer for automated phases
+        const currentPhase = this.gameFlowController.cycleManager?.currentPhase;
+        if (currentPhase === 'resource_production' || currentPhase === 'end_cycle_events') {
+            console.log('Timer hidden - automated phase:', currentPhase);
+            if (this.timerContainer) {
+                this.timerContainer.style.display = 'none';
+            }
+            return;
+        }
+        
+        // Get time limit for current phase
+        const phaseConfig = this.gameFlowController.turnManager?.phaseActionConfigs[currentPhase];
+        const timeLimit = phaseConfig?.timeLimit || 120; // Default 2 minutes
+        
+        console.log('Phase config:', { currentPhase, timeLimit, player: player.id });
+        
+        // Don't show timer for human players in interactive phases
+        if (!player.isAI && phaseConfig?.allowedActions?.length > 0) {
+            console.log('Timer hidden - human player in interactive phase');
+            if (this.timerContainer) {
+                this.timerContainer.style.display = 'none';
+            }
+            return;
+        }
+        
+        // Show timer
+        console.log('Showing timer, container exists:', !!this.timerContainer);
+        if (this.timerContainer) {
+            this.timerContainer.style.display = 'block';
+            console.log('Timer display set to block');
+        } else {
+            console.error('Timer container not found!');
+        }
+        
+        let remainingTime = timeLimit;
+        this.updateTimerDisplay(remainingTime);
+        
+        // Update timer every second
+        this.turnTimerInterval = setInterval(() => {
+            remainingTime--;
+            this.updateTimerDisplay(remainingTime);
+            
+            // Change color when time is running low
+            if (remainingTime <= 10 && this.timerDisplay) {
+                this.timerDisplay.style.color = '#ff4444';
+            } else if (remainingTime <= 30 && this.timerDisplay) {
+                this.timerDisplay.style.color = '#ffaa44';
+            }
+            
+            if (remainingTime <= 0) {
+                this.stopTurnTimer();
+            }
+        }, 1000);
+    }
+    
+    stopTurnTimer() {
+        if (this.turnTimerInterval) {
+            clearInterval(this.turnTimerInterval);
+            this.turnTimerInterval = null;
+        }
+        
+        if (this.timerContainer) {
+            this.timerContainer.style.display = 'none';
+        }
+        
+        // Reset timer color
+        if (this.timerDisplay) {
+            this.timerDisplay.style.color = '#f5c542';
+        }
+    }
+    
+    updateTimerDisplay(seconds) {
+        if (!this.timerDisplay) return;
+        
+        const minutes = Math.floor(seconds / 60);
+        const secs = seconds % 60;
+        this.timerDisplay.textContent = `${minutes}:${secs.toString().padStart(2, '0')}`;
+    }
+    
+    destroy() {
+        // Clean up timer when scene is destroyed
+        this.stopTurnTimer();
+        
+        // Clean up UI panels
+        if (this.productionSummaryPanel) {
+            this.productionSummaryPanel.destroy();
+        }
+        
+        super.destroy();
+    }
+    
+    // Resource Production Visualization Methods
+    initializeResourceVisualization() {
+        // Define resource colors
+        this.resourceColors = {
+            mana: 0x0080ff,      // Blue
+            vitality: 0x00ff00,  // Green
+            arcanum: 0xff8000,   // Orange
+            aether: 0xff00ff     // Purple
+        };
+        
+        // Create particle emitters for each resource type
+        this.resourceParticles = {};
+        
+        // Create a simple white circle texture for particles if it doesn't exist
+        if (!this.textures.exists('particle')) {
+            const graphics = this.make.graphics({ x: 0, y: 0 }, false);
+            graphics.fillStyle(0xffffff);
+            graphics.fillCircle(4, 4, 4);
+            graphics.generateTexture('particle', 8, 8);
+            graphics.destroy();
+        }
+        
+        Object.keys(this.resourceColors).forEach(resource => {
+            const particles = this.add.particles(0, 0, 'particle', {
+                tint: this.resourceColors[resource],
+                scale: { start: 0.5, end: 0 },
+                speed: { min: 50, max: 150 },
+                lifespan: 1000,
+                frequency: -1,
+                emitting: false
+            });
+            this.resourceParticles[resource] = particles;
+        });
+    }
+    
+    getResourceColor(resource) {
+        return this.resourceColors[resource] || 0xffffff;
+    }
+    
+    onResourceProductionStarted(event) {
+        console.log('Resource production started:', event);
+        this.showStatusMessage('Resources are being produced...', 'info');
+    }
+    
+    onTerritoryProduced(event) {
+        const { territoryId, resource, amount, playerId } = event;
+        
+        // Get territory from grid
+        const territory = this.gameFlowController.territoryGrid?.getTerritoryById(territoryId);
+        if (!territory) return;
+        
+        // Show production animation
+        this.showResourceProduction(territory, resource, amount);
+    }
+    
+    onPlayerProductionApplied(event) {
+        const { playerName, resources, storageResults } = event;
+        
+        // Update player display to show new resources
+        this.updatePlayerDisplay();
+        
+        // Show overflow message if any
+        if (storageResults.goldFromOverflow > 0) {
+            this.showStatusMessage(
+                `${playerName} converted overflow to ${storageResults.goldFromOverflow} gold!`, 
+                'warning'
+            );
+        }
+    }
+    
+    onResourceProductionCompleted(event) {
+        const { summary } = event;
+        console.log('Production completed:', summary);
+        
+        // Show production summary
+        this.showProductionSummary(summary);
+    }
+    
+    showResourceProduction(territory, resource, amount) {
+        if (amount <= 0) return;
+        
+        // Get territory position
+        const pos = this.hexUtils.axialToPixel(territory.q, territory.r);
+        
+        // Create floating text showing +X resource
+        const color = `#${this.resourceColors[resource].toString(16).padStart(6, '0')}`;
+        const text = this.add.text(pos.x, pos.y - 30, `+${amount}`, {
+            fontSize: '20px',
+            color: color,
+            stroke: '#000000',
+            strokeThickness: 3,
+            fontWeight: 'bold'
+        });
+        text.setOrigin(0.5);
+        
+        // Animate text floating up and fading
+        this.tweens.add({
+            targets: text,
+            y: pos.y - 80,
+            alpha: 0,
+            duration: 2000,
+            ease: 'Power2',
+            onComplete: () => text.destroy()
+        });
+        
+        // Emit particles from territory
+        this.emitResourceParticles(pos, resource, amount);
+        
+        // Add resource icon next to text
+        const iconSize = 16;
+        const icon = this.add.graphics();
+        icon.x = pos.x + 20;
+        icon.y = pos.y - 30;
+        
+        // Draw resource-specific icon
+        this.drawResourceIcon(icon, resource, iconSize);
+        
+        // Animate icon with text
+        this.tweens.add({
+            targets: icon,
+            y: pos.y - 80,
+            alpha: 0,
+            duration: 2000,
+            ease: 'Power2',
+            onComplete: () => icon.destroy()
+        });
+    }
+    
+    drawResourceIcon(graphics, resource, size) {
+        const color = this.resourceColors[resource];
+        graphics.fillStyle(color, 1);
+        graphics.lineStyle(1, 0x000000, 1);
+        
+        switch (resource) {
+            case 'mana':
+                // Crystal shape
+                graphics.beginPath();
+                graphics.moveTo(0, -size);
+                graphics.lineTo(size * 0.7, -size * 0.3);
+                graphics.lineTo(size * 0.7, size * 0.3);
+                graphics.lineTo(0, size);
+                graphics.lineTo(-size * 0.7, size * 0.3);
+                graphics.lineTo(-size * 0.7, -size * 0.3);
+                graphics.closePath();
+                break;
+            case 'vitality':
+                // Leaf shape
+                graphics.beginPath();
+                graphics.moveTo(0, -size);
+                graphics.quadraticCurveTo(size * 0.5, -size * 0.5, size * 0.5, 0);
+                graphics.quadraticCurveTo(size * 0.5, size * 0.5, 0, size);
+                graphics.quadraticCurveTo(-size * 0.5, size * 0.5, -size * 0.5, 0);
+                graphics.quadraticCurveTo(-size * 0.5, -size * 0.5, 0, -size);
+                graphics.closePath();
+                break;
+            case 'arcanum':
+                // Gear shape
+                graphics.fillCircle(0, 0, size * 0.6);
+                for (let i = 0; i < 6; i++) {
+                    const angle = (i * Math.PI * 2) / 6;
+                    const x = Math.cos(angle) * size * 0.8;
+                    const y = Math.sin(angle) * size * 0.8;
+                    graphics.fillCircle(x, y, size * 0.3);
+                }
+                break;
+            case 'aether':
+                // Star shape
+                graphics.beginPath();
+                for (let i = 0; i < 8; i++) {
+                    const angle = (i * Math.PI * 2) / 8;
+                    const radius = i % 2 === 0 ? size : size * 0.5;
+                    const x = Math.cos(angle) * radius;
+                    const y = Math.sin(angle) * radius;
+                    if (i === 0) {
+                        graphics.moveTo(x, y);
+                    } else {
+                        graphics.lineTo(x, y);
+                    }
+                }
+                graphics.closePath();
+                break;
+        }
+        
+        graphics.fillPath();
+        graphics.strokePath();
+    }
+    
+    emitResourceParticles(from, resource, amount) {
+        const emitter = this.resourceParticles[resource];
+        if (!emitter) return;
+        
+        // Set emitter position
+        emitter.setPosition(from.x, from.y);
+        
+        // Emit particles based on amount
+        const particleCount = Math.min(amount * 2, 50);
+        emitter.explode(particleCount);
+    }
+    
+    showProductionSummary(summary) {
+        // Show the production summary panel
+        if (this.productionSummaryPanel) {
+            this.productionSummaryPanel.show(summary);
+        } else {
+            // Fallback to text message if panel not available
+            let summaryText = `=== Cycle ${summary.cycleNumber} Production ===\n\n`;
+            
+            // Add player summaries
+            summary.playerSummaries.forEach(player => {
+                const total = Object.values(player.totalResources).reduce((sum, val) => sum + val, 0);
+                if (total > 0) {
+                    summaryText += `${player.playerName}: `;
+                    summaryText += `M:${player.totalResources.mana} `;
+                    summaryText += `V:${player.totalResources.vitality} `;
+                    summaryText += `A:${player.totalResources.arcanum} `;
+                    summaryText += `Ae:${player.totalResources.aether}\n`;
+                }
+            });
+            
+            // Show in status message
+            this.showStatusMessage(summaryText.trim(), 'info');
+        }
+    }
+    
+    // Resource Decay Event Handlers
+    onResourceDecayProcessing(event) {
+        console.log('Resource decay processing:', event);
+        this.showStatusMessage('Resources are decaying...', 'warning');
+    }
+    
+    onPlayerResourcesDecayed(event) {
+        const { playerName, decayed, preserved } = event;
+        
+        // Show decay amounts
+        const decayText = Object.entries(decayed)
+            .filter(([_, amount]) => amount > 0)
+            .map(([resource, amount]) => `${resource}: -${amount}`)
+            .join(', ');
+            
+        if (decayText) {
+            this.showStatusMessage(`${playerName} lost ${decayText} to decay`, 'warning');
+        }
+        
+        // Update player display
+        this.updatePlayerDisplay();
+    }
+    
+    onResourceDecayCompleted(event) {
+        const { summary } = event;
+        console.log('Decay completed:', summary);
+        
+        // Show total decay summary
+        const totalDecay = Object.values(summary.totalDecayed).reduce((sum, val) => sum + val, 0);
+        if (totalDecay > 0) {
+            this.showStatusMessage(`Total resources decayed: ${totalDecay}`, 'warning');
+        }
+    }
+    
+    // Gold Transaction Event Handlers
+    onGoldDeducted(event) {
+        const { playerId, amount, reason, newBalance } = event;
+        const player = this.gameFlowController.stateManager.getPlayer(playerId);
+        
+        if (player) {
+            this.showStatusMessage(`${player.name} spent ${amount} gold on ${reason} (Balance: ${newBalance})`, 'warning');
+            
+            // Show floating text at player panel
+            this.showFloatingGoldText(playerId, `-${amount}`, 0xff0000);
+        }
+        
+        // Update player display
+        this.updatePlayerDisplay();
+    }
+    
+    onGoldAdded(event) {
+        const { playerId, amount, reason, newBalance } = event;
+        const player = this.gameFlowController.stateManager.getPlayer(playerId);
+        
+        if (player) {
+            this.showStatusMessage(`${player.name} gained ${amount} gold from ${reason} (Balance: ${newBalance})`, 'success');
+            
+            // Show floating text at player panel
+            this.showFloatingGoldText(playerId, `+${amount}`, 0x00ff00);
+        }
+        
+        // Update player display
+        this.updatePlayerDisplay();
+    }
+    
+    showFloatingGoldText(playerId, text, color) {
+        // Find player panel position
+        const playerIndex = this.gameFlowController.stateManager.gameState.players.findIndex(p => p.id === playerId);
+        if (playerIndex === -1) return;
+        
+        // Calculate position based on player panel
+        const x = 100 + (playerIndex * 200);
+        const y = 50;
+        
+        // Create floating text
+        const floatingText = this.add.text(x, y, text, {
+            fontSize: '24px',
+            color: `#${color.toString(16).padStart(6, '0')}`,
+            stroke: '#000000',
+            strokeThickness: 3,
+            fontWeight: 'bold'
+        });
+        floatingText.setOrigin(0.5);
+        
+        // Animate floating up and fading
+        this.tweens.add({
+            targets: floatingText,
+            y: y - 50,
+            alpha: 0,
+            duration: 1500,
+            ease: 'Power2',
+            onComplete: () => floatingText.destroy()
+        });
     }
 }

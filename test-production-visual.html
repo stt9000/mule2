@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Resource Production Visual Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #1a1a1a;
+            color: white;
+            margin: 20px;
+        }
+        #game-container {
+            width: 800px;
+            height: 600px;
+            margin: 0 auto;
+            border: 2px solid #FFD700;
+            position: relative;
+        }
+        #test-controls {
+            margin-top: 20px;
+            text-align: center;
+        }
+        button {
+            background-color: #FFD700;
+            color: black;
+            border: none;
+            padding: 10px 20px;
+            margin: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            border-radius: 5px;
+        }
+        button:hover {
+            background-color: #FFF;
+        }
+        #log {
+            margin-top: 20px;
+            padding: 10px;
+            background-color: rgba(0,0,0,0.5);
+            border: 1px solid #666;
+            height: 200px;
+            overflow-y: auto;
+        }
+        .log-entry {
+            margin: 5px 0;
+            padding: 5px;
+            background-color: rgba(255,255,255,0.1);
+        }
+    </style>
+</head>
+<body>
+    <h1>Resource Production Visual Test</h1>
+    
+    <div id="game-container"></div>
+    
+    <div id="test-controls">
+        <button onclick="triggerProduction()">Trigger Production Phase</button>
+        <button onclick="showProductionSummary()">Show Production Summary</button>
+        <button onclick="triggerDecay()">Trigger Resource Decay</button>
+        <button onclick="resetTest()">Reset Test</button>
+    </div>
+    
+    <div id="log"></div>
+
+    <script type="module">
+        import Phaser from './node_modules/phaser/dist/phaser.esm.js';
+        
+        let gameScene;
+        let testData;
+        
+        // Create a minimal test scene
+        class TestScene extends Phaser.Scene {
+            constructor() {
+                super('TestScene');
+            }
+            
+            create() {
+                // Store reference
+                gameScene = this;
+                
+                // Create mock game flow controller
+                this.gameFlowController = {
+                    eventListeners: {},
+                    on: function(event, handler) {
+                        if (!this.eventListeners[event]) {
+                            this.eventListeners[event] = [];
+                        }
+                        this.eventListeners[event].push(handler);
+                    },
+                    broadcastEvent: function(event, data) {
+                        if (this.eventListeners[event]) {
+                            this.eventListeners[event].forEach(handler => handler(data));
+                        }
+                    },
+                    territoryGrid: {
+                        getTerritoryById: (id) => testData.territories.find(t => t.id === id)
+                    }
+                };
+                
+                // Initialize test data
+                testData = {
+                    territories: [
+                        { id: 'territory_0_0', q: 0, r: 0, terrainType: 'crystalline_cave' },
+                        { id: 'territory_1_0', q: 1, r: 0, terrainType: 'ancient_grove' },
+                        { id: 'territory_0_1', q: 0, r: 1, terrainType: 'volcanic_field' }
+                    ],
+                    players: [
+                        { id: 'player1', name: 'Player 1', resources: { mana: 50, vitality: 30, arcanum: 20, aether: 5 } },
+                        { id: 'player2', name: 'Player 2', resources: { mana: 20, vitality: 80, arcanum: 40, aether: 10 } }
+                    ]
+                };
+                
+                // Draw simple hex map
+                this.hexSize = 60;
+                testData.territories.forEach(territory => {
+                    const x = 300 + territory.q * this.hexSize * 1.5;
+                    const y = 200 + territory.r * this.hexSize * 1.732 + (territory.q % 2) * this.hexSize * 0.866;
+                    
+                    territory.x = x;
+                    territory.y = y;
+                    
+                    // Draw hex
+                    const hex = this.add.graphics();
+                    hex.lineStyle(2, 0xFFFFFF);
+                    hex.fillStyle(0x444444);
+                    
+                    const points = [];
+                    for (let i = 0; i < 6; i++) {
+                        const angle = (Math.PI / 3) * i;
+                        points.push({
+                            x: x + Math.cos(angle) * this.hexSize,
+                            y: y + Math.sin(angle) * this.hexSize
+                        });
+                    }
+                    
+                    hex.beginPath();
+                    hex.moveTo(points[0].x, points[0].y);
+                    for (let i = 1; i < 6; i++) {
+                        hex.lineTo(points[i].x, points[i].y);
+                    }
+                    hex.closePath();
+                    hex.fillPath();
+                    hex.strokePath();
+                    
+                    // Add label
+                    this.add.text(x, y, territory.terrainType.split('_')[0], {
+                        fontSize: '14px',
+                        color: '#FFF'
+                    }).setOrigin(0.5);
+                });
+                
+                // Initialize resource visualization components
+                this.initResourceVisualization();
+                this.setupEventListeners();
+                
+                // Create production summary panel
+                this.createProductionPanel();
+                
+                window.log('Test scene created successfully');
+            }
+            
+            initResourceVisualization() {
+                // Import methods from GameScene
+                this.resourceColors = {
+                    mana: 0x0080ff,
+                    vitality: 0x00ff00,
+                    arcanum: 0xff8000,
+                    aether: 0xff00ff
+                };
+                
+                // Create particle texture
+                const graphics = this.make.graphics({ x: 0, y: 0 }, false);
+                graphics.fillStyle(0xffffff);
+                graphics.fillCircle(4, 4, 4);
+                graphics.generateTexture('particle', 8, 8);
+                graphics.destroy();
+                
+                this.resourceParticles = {};
+                Object.keys(this.resourceColors).forEach(resource => {
+                    const particles = this.add.particles(0, 0, 'particle', {
+                        tint: this.resourceColors[resource],
+                        scale: { start: 0.5, end: 0 },
+                        speed: { min: 50, max: 150 },
+                        lifespan: 1000,
+                        frequency: -1,
+                        emitting: false
+                    });
+                    this.resourceParticles[resource] = particles;
+                });
+            }
+            
+            setupEventListeners() {
+                this.gameFlowController.on('territory.produced', (event) => {
+                    const { territoryId, resource, amount } = event;
+                    const territory = testData.territories.find(t => t.id === territoryId);
+                    if (territory) {
+                        this.showResourceProduction(territory, resource, amount);
+                        window.log(`Territory ${territoryId} produced ${amount} ${resource}`);
+                    }
+                });
+                
+                this.gameFlowController.on('resource_decay.processing', () => {
+                    window.log('Resource decay started...');
+                });
+                
+                this.gameFlowController.on('player.resources_decayed', (event) => {
+                    const { playerName, decayed } = event;
+                    window.log(`${playerName} lost resources to decay:`, decayed);
+                });
+            }
+            
+            showResourceProduction(territory, resource, amount) {
+                // Create floating text
+                const color = `#${this.resourceColors[resource].toString(16).padStart(6, '0')}`;
+                const text = this.add.text(territory.x, territory.y - 30, `+${amount}`, {
+                    fontSize: '20px',
+                    color: color,
+                    stroke: '#000000',
+                    strokeThickness: 3,
+                    fontWeight: 'bold'
+                });
+                text.setOrigin(0.5);
+                
+                // Animate text
+                this.tweens.add({
+                    targets: text,
+                    y: territory.y - 80,
+                    alpha: 0,
+                    duration: 2000,
+                    ease: 'Power2',
+                    onComplete: () => text.destroy()
+                });
+                
+                // Emit particles
+                const emitter = this.resourceParticles[resource];
+                if (emitter) {
+                    emitter.setPosition(territory.x, territory.y);
+                    emitter.explode(amount * 2);
+                }
+            }
+            
+            createProductionPanel() {
+                // Create a mock production summary panel
+                const panel = document.createElement('div');
+                panel.id = 'production-panel';
+                panel.style.display = 'none';
+                document.getElementById('game-container').appendChild(panel);
+            }
+        }
+        
+        // Initialize Phaser game
+        const config = {
+            type: Phaser.AUTO,
+            width: 800,
+            height: 600,
+            parent: 'game-container',
+            backgroundColor: '#2a2a2a',
+            scene: TestScene
+        };
+        
+        const game = new Phaser.Game(config);
+        
+        // Helper function to log
+        window.log = function(message, data) {
+            const logDiv = document.getElementById('log');
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            entry.textContent = `${new Date().toLocaleTimeString()}: ${message}`;
+            if (data) {
+                entry.textContent += ` ${JSON.stringify(data)}`;
+            }
+            logDiv.appendChild(entry);
+            logDiv.scrollTop = logDiv.scrollHeight;
+        };
+        
+        // Test functions
+        window.triggerProduction = function() {
+            if (!gameScene) return;
+            
+            // Simulate production for each territory
+            const productions = [
+                { territoryId: 'territory_0_0', resource: 'mana', amount: 15 },
+                { territoryId: 'territory_1_0', resource: 'vitality', amount: 20 },
+                { territoryId: 'territory_0_1', resource: 'arcanum', amount: 12 }
+            ];
+            
+            productions.forEach((prod, index) => {
+                setTimeout(() => {
+                    gameScene.gameFlowController.broadcastEvent('territory.produced', prod);
+                }, index * 500);
+            });
+        };
+        
+        window.showProductionSummary = function() {
+            window.log('Showing production summary panel');
+            alert('Production Summary:\n\nPlayer 1: +15 Mana, +8 Vitality\nPlayer 2: +12 Arcanum, +20 Vitality\n\nTotal: 55 resources produced');
+        };
+        
+        window.triggerDecay = function() {
+            if (!gameScene) return;
+            
+            gameScene.gameFlowController.broadcastEvent('resource_decay.processing');
+            
+            setTimeout(() => {
+                gameScene.gameFlowController.broadcastEvent('player.resources_decayed', {
+                    playerName: 'Player 1',
+                    decayed: { mana: 5, vitality: 10 }
+                });
+            }, 500);
+            
+            setTimeout(() => {
+                gameScene.gameFlowController.broadcastEvent('player.resources_decayed', {
+                    playerName: 'Player 2',
+                    decayed: { vitality: 25 }
+                });
+            }, 1000);
+        };
+        
+        window.resetTest = function() {
+            location.reload();
+        };
+    </script>
+</body>
+</html>

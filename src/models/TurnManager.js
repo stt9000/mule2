@@ -5,7 +5,7 @@ import ErrorHandler from '../utils/ErrorHandler.js';
  * Manages player turn sequence and action tracking
  */
 export default class TurnManager {
-    constructor(players = []) {
+    constructor(players = [], gameFlowController = null) {
         this.players = players;
         this.currentPlayerIndex = 0;
         this.currentPlayer = null;
@@ -14,6 +14,7 @@ export default class TurnManager {
         this.turnTimer = null;
         this.actionsRemaining = {};
         this.turnHistory = [];
+        this.gameFlow = gameFlowController; // Reference to GameFlowController
         
         // Phases where all players act simultaneously
         this.simultaneousPhases = ['auction_phase'];
@@ -31,7 +32,7 @@ export default class TurnManager {
                 timeLimit: 120
             },
             construct_outfitting: {
-                maxActions: 3, // limited outfitting actions
+                maxActions: -1, // unlimited actions - player must click End Turn
                 allowedActions: ['place_construct', 'upgrade_construct', 'move_construct'],
                 timeLimit: 180
             },
@@ -142,8 +143,11 @@ export default class TurnManager {
         // Recalculate turn order at start of new phase
         if (phaseName === 'territory_selection') {
             this.calculateTurnOrder();
-            this.currentPlayerIndex = 0;
         }
+        
+        // Always reset player index when starting a new phase
+        console.log(`Setting phase to ${phaseName} - resetting currentPlayerIndex to 0`);
+        this.currentPlayerIndex = 0;
         
         this.broadcastEvent('phase.set', {
             phase: phaseName,
@@ -156,6 +160,11 @@ export default class TurnManager {
      */
     startTurnSequence() {
         try {
+            console.log('Starting turn sequence for phase:', this.currentPhase);
+            
+            // Reset all player actions for the new phase
+            this.actionsRemaining = {};
+            
             const phaseConfig = this.phaseActionConfigs[this.currentPhase];
             
             if (phaseConfig.simultaneous) {
@@ -176,8 +185,15 @@ export default class TurnManager {
             this.calculateTurnOrder();
         }
         
-        this.currentPlayerIndex = 0;
-        this.startPlayerTurn(this.getCurrentPlayer());
+        const currentPlayer = this.getCurrentPlayer();
+        console.log('Starting sequential turns. Phase:', this.currentPhase, 'Current player:', currentPlayer?.id, 'Index:', this.currentPlayerIndex, 'Turn order:', this.turnOrder.map(p => p.id));
+        
+        if (!currentPlayer) {
+            console.error('No current player found! Turn order:', this.turnOrder);
+            return;
+        }
+        
+        this.startPlayerTurn(currentPlayer);
     }
 
     /**
@@ -199,7 +215,12 @@ export default class TurnManager {
      */
     getCurrentPlayer() {
         if (this.turnOrder.length === 0) return null;
-        return this.turnOrder[this.currentPlayerIndex];
+        const player = this.turnOrder[this.currentPlayerIndex];
+        // If we have a gameFlow reference, get fresh player data
+        if (this.gameFlow && this.gameFlow.stateManager) {
+            return this.gameFlow.stateManager.getPlayer(player.id) || player;
+        }
+        return player;
     }
 
     /**
@@ -207,8 +228,20 @@ export default class TurnManager {
      */
     startPlayerTurn(player) {
         try {
+            console.log(`Starting turn for ${player.id} in phase ${this.currentPhase}`);
             this.currentPlayer = player;
             this.initializePlayerActions(player);
+            console.log(`Actions initialized for ${player.id}:`, this.actionsRemaining[player.id]);
+            
+            // Track if player has taken any actions this turn
+            this.actionsRemaining[player.id].takenActions = 0;
+            
+            // Check if this is a phase where players have no actions (automated phases)
+            if (this.actionsRemaining[player.id].remaining === 0) {
+                console.log(`Player ${player.id} has 0 actions in phase ${this.currentPhase} - this is likely an automated phase`);
+                // For automated phases, let the scene handle the auto-advance
+            }
+            
             this.startTurnTimer(player);
             
             this.broadcastEvent('turn.started', { 
@@ -228,11 +261,21 @@ export default class TurnManager {
     initializePlayerActions(player) {
         const phaseConfig = this.phaseActionConfigs[this.currentPhase];
         
+        console.log(`Initializing actions for ${player.id} in phase ${this.currentPhase}:`, phaseConfig);
+        
+        // Handle unlimited actions (-1 means unlimited)
+        const maxActions = phaseConfig.maxActions;
+        const isUnlimited = maxActions === -1 || maxActions === Infinity;
+        
         this.actionsRemaining[player.id] = {
-            total: phaseConfig.maxActions,
-            remaining: phaseConfig.maxActions,
-            allowedActions: [...phaseConfig.allowedActions]
+            total: maxActions,
+            remaining: isUnlimited ? Infinity : maxActions,
+            allowedActions: [...phaseConfig.allowedActions],
+            takenActions: 0,
+            unlimited: isUnlimited
         };
+        
+        console.log(`Player ${player.id} actions set to:`, this.actionsRemaining[player.id]);
     }
 
     /**
@@ -250,7 +293,10 @@ export default class TurnManager {
      */
     executePlayerAction(player, action) {
         try {
+            console.log(`TurnManager.executePlayerAction called for ${player.id}, action:`, action);
+            
             if (!this.canPlayerAct(player, action)) {
+                console.log(`Player ${player.id} cannot perform action`);
                 this.broadcastEvent('action.rejected', {
                     player: player,
                     action: action,
@@ -260,10 +306,16 @@ export default class TurnManager {
             }
             
             const success = this.processAction(player, action);
+            console.log(`Action processed for ${player.id}, success: ${success}`);
             
             if (success) {
                 if (this.consumesAction(action)) {
-                    this.actionsRemaining[player.id].remaining--;
+                    // Don't decrement if unlimited actions
+                    if (!this.actionsRemaining[player.id].unlimited) {
+                        this.actionsRemaining[player.id].remaining--;
+                    }
+                    this.actionsRemaining[player.id].takenActions = (this.actionsRemaining[player.id].takenActions || 0) + 1;
+                    console.log(`Action consumed for ${player.id}. Remaining: ${this.actionsRemaining[player.id].remaining}`);
                 }
                 
                 // Log the action
@@ -276,13 +328,28 @@ export default class TurnManager {
                 });
                 
                 // Check if player's turn is complete
-                if (this.actionsRemaining[player.id].remaining <= 0 && !this.isSimultaneousPhase()) {
-                    this.endPlayerTurn(player);
+                // For human player in construct phase, don't auto-end if they haven't taken actions
+                const isHumanConstructPhase = !player.isAI && this.currentPhase === 'construct_outfitting';
+                const hasTakenActions = (this.actionsRemaining[player.id].takenActions || 0) > 0;
+                
+                // Check if turn should auto-end (not for unlimited actions)
+                const shouldAutoEnd = !this.actionsRemaining[player.id].unlimited && 
+                                    this.actionsRemaining[player.id].remaining <= 0 && 
+                                    !this.isSimultaneousPhase();
+                
+                if (shouldAutoEnd) {
+                    if (!isHumanConstructPhase || hasTakenActions) {
+                        console.log(`Player ${player.id} has no actions remaining (${this.actionsRemaining[player.id].remaining}/${this.actionsRemaining[player.id].total}), ending turn`);
+                        this.endPlayerTurn(player);
+                    } else {
+                        console.log(`Player ${player.id} has no actions but hasn't taken any yet - waiting for manual end turn`);
+                    }
                 }
             }
             
             return success;
         } catch (error) {
+            console.error(`Error in executePlayerAction for ${player.id}:`, error);
             this.errorHandler.handleError(error, 'TurnManager.executePlayerAction');
             return false;
         }
@@ -294,12 +361,31 @@ export default class TurnManager {
     canPlayerAct(player, action) {
         const playerActions = this.actionsRemaining[player.id];
         
-        if (!playerActions) return false;
-        if (playerActions.remaining <= 0) return false;
-        if (!playerActions.allowedActions.includes(action.type)) return false;
+        console.log('canPlayerAct check:', {
+            playerId: player.id,
+            actionType: action.type,
+            playerActions: playerActions,
+            currentPlayer: this.currentPlayer?.id,
+            isSimultaneousPhase: this.isSimultaneousPhase(),
+            currentPhase: this.currentPhase
+        });
+        
+        if (!playerActions) {
+            console.log('No player actions initialized for', player.id);
+            return false;
+        }
+        if (playerActions.remaining <= 0) {
+            console.log('No actions remaining for', player.id);
+            return false;
+        }
+        if (!playerActions.allowedActions.includes(action.type)) {
+            console.log('Action type not allowed:', action.type);
+            return false;
+        }
         
         // Additional phase-specific checks
-        if (!this.isSimultaneousPhase() && this.currentPlayer !== player) {
+        if (!this.isSimultaneousPhase() && this.currentPlayer?.id !== player.id) {
+            console.log('Not player turn. Current:', this.currentPlayer?.id, 'Attempting:', player.id);
             return false;
         }
         
@@ -349,6 +435,7 @@ export default class TurnManager {
      */
     endPlayerTurn(player) {
         try {
+            console.log(`Ending turn for ${player.id} - Actions remaining: ${this.actionsRemaining[player.id]?.remaining}`);
             this.clearTurnTimer();
             
             this.broadcastEvent('turn.ended', {
@@ -368,12 +455,21 @@ export default class TurnManager {
      * Advance to the next player
      */
     nextPlayer() {
+        console.log(`NextPlayer called. Current index: ${this.currentPlayerIndex}, Total players: ${this.turnOrder.length}`);
+        
+        // Track if we've wrapped around
+        const wasLastPlayer = this.currentPlayerIndex === this.turnOrder.length - 1;
+        
         this.currentPlayerIndex = (this.currentPlayerIndex + 1) % this.turnOrder.length;
         
-        if (this.currentPlayerIndex === 0) {
+        console.log(`New index after increment: ${this.currentPlayerIndex}`);
+        
+        if (this.currentPlayerIndex === 0 && wasLastPlayer) {
             // All players have had their turn
+            console.log('All players have completed their turns - ending turn sequence');
             this.endTurnSequence();
         } else {
+            console.log(`Starting next player turn: ${this.getCurrentPlayer()?.id}`);
             this.startPlayerTurn(this.getCurrentPlayer());
         }
     }
@@ -382,6 +478,7 @@ export default class TurnManager {
      * End the current turn sequence
      */
     endTurnSequence() {
+        console.log('TurnManager.endTurnSequence called - broadcasting turn_sequence.ended event');
         this.broadcastEvent('turn_sequence.ended', {
             phase: this.currentPhase,
             completedTurns: this.turnOrder.length
@@ -413,10 +510,20 @@ export default class TurnManager {
     startTurnTimer(player) {
         this.clearTurnTimer();
         
+        // Don't start timer for human players during interactive phases
+        if (!player.isAI) {
+            const phaseConfig = this.phaseActionConfigs[this.currentPhase];
+            if (phaseConfig && phaseConfig.allowedActions && phaseConfig.allowedActions.length > 0) {
+                console.log('Skipping timer for human player in interactive phase');
+                return;
+            }
+        }
+        
         const phaseConfig = this.phaseActionConfigs[this.currentPhase];
         const timeLimit = this.turnTimeLimit || phaseConfig.timeLimit;
         
         if (timeLimit && timeLimit > 0) {
+            console.log(`Starting turn timer for ${player.id}: ${timeLimit} seconds`);
             this.turnTimer = setTimeout(() => {
                 this.forceEndPlayerTurn(player);
             }, timeLimit * 1000);

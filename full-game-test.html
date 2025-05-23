@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Magical Frontiers - Full Game Test</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #1a1a1a;
+            color: white;
+            font-family: Arial, sans-serif;
+        }
+        #game-container {
+            width: 100%;
+            height: 600px;
+            position: relative;
+        }
+        #test-controls {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            background: rgba(0,0,0,0.8);
+            padding: 15px;
+            border: 1px solid #FFD700;
+            border-radius: 5px;
+            z-index: 1000;
+        }
+        button {
+            display: block;
+            width: 200px;
+            margin: 5px 0;
+            padding: 8px;
+            background: #FFD700;
+            color: black;
+            border: none;
+            cursor: pointer;
+            font-weight: bold;
+            border-radius: 3px;
+        }
+        button:hover {
+            background: #FFF;
+        }
+        #test-log {
+            position: fixed;
+            bottom: 10px;
+            left: 10px;
+            right: 220px;
+            height: 150px;
+            background: rgba(0,0,0,0.8);
+            border: 1px solid #666;
+            padding: 10px;
+            overflow-y: auto;
+            font-size: 12px;
+        }
+        .log-entry {
+            margin: 2px 0;
+            padding: 2px 5px;
+        }
+        .log-success { color: #4CAF50; }
+        .log-error { color: #f44336; }
+        .log-info { color: #2196F3; }
+        .test-status {
+            position: fixed;
+            top: 10px;
+            left: 10px;
+            background: rgba(0,0,0,0.8);
+            padding: 10px;
+            border: 1px solid #FFD700;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container"></div>
+    
+    <div class="test-status">
+        <h3>Game Status</h3>
+        <div id="status-info">Loading...</div>
+    </div>
+    
+    <div id="test-controls">
+        <h3>Test Controls</h3>
+        <button onclick="runFullCycle()">Run Full Cycle</button>
+        <button onclick="testTerritorySelection()">Test Territory Selection</button>
+        <button onclick="testConstructPlacement()">Test Construct Placement</button>
+        <button onclick="testResourceProduction()">Test Resource Production</button>
+        <button onclick="testResourceDecay()">Test Resource Decay</button>
+        <button onclick="skipToPhase('auction_phase')">Skip to Auction</button>
+        <button onclick="showGameState()">Show Game State</button>
+        <button onclick="resetGame()">Reset Game</button>
+    </div>
+    
+    <div id="test-log"></div>
+
+    <!-- Game Scripts -->
+    <script src="node_modules/phaser/dist/phaser.min.js"></script>
+    <script type="module">
+        import GameScene from './src/scenes/GameScene.js';
+        import BootScene from './src/scenes/BootScene.js';
+        
+        let gameScene;
+        let testMode = true;
+        
+        // Override GameScene create to store reference
+        const originalCreate = GameScene.prototype.create;
+        GameScene.prototype.create = function() {
+            originalCreate.call(this);
+            gameScene = this;
+            setupTestHooks();
+            log('Game scene initialized', 'success');
+            updateStatus();
+        };
+        
+        // Initialize Phaser
+        const config = {
+            type: Phaser.AUTO,
+            width: window.innerWidth,
+            height: 600,
+            parent: 'game-container',
+            backgroundColor: '#2a2a2a',
+            scene: [BootScene, GameScene]
+        };
+        
+        const game = new Phaser.Game(config);
+        
+        // Test logging
+        function log(message, type = 'info') {
+            const logDiv = document.getElementById('test-log');
+            const entry = document.createElement('div');
+            entry.className = `log-entry log-${type}`;
+            entry.textContent = `${new Date().toLocaleTimeString()}: ${message}`;
+            logDiv.appendChild(entry);
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+        
+        // Setup test hooks
+        function setupTestHooks() {
+            if (!gameScene || !gameScene.gameFlowController) return;
+            
+            const gfc = gameScene.gameFlowController;
+            
+            // Hook into events
+            gfc.on('phase.started', (data) => {
+                log(`Phase started: ${data.phase}`, 'info');
+                updateStatus();
+            });
+            
+            gfc.on('turn.started', (data) => {
+                log(`Turn started: ${data.player.name}`, 'info');
+            });
+            
+            gfc.on('territory.ownership_changed', (data) => {
+                log(`Territory ${data.territoryId} claimed by ${data.newOwner}`, 'success');
+            });
+            
+            gfc.on('territory.produced', (data) => {
+                log(`Territory produced ${data.amount} ${data.resource}`, 'success');
+            });
+            
+            gfc.on('resource_decay.completed', (data) => {
+                log(`Resources decayed for cycle ${data.cycle}`, 'info');
+            });
+        }
+        
+        // Update status display
+        function updateStatus() {
+            if (!gameScene || !gameScene.gameFlowController) return;
+            
+            const gfc = gameScene.gameFlowController;
+            const status = gfc.cycleManager.getStatus();
+            const players = gfc.stateManager.gameState.players;
+            
+            let html = `
+                <strong>Cycle:</strong> ${status.currentCycle}/${status.maxCycles}<br>
+                <strong>Phase:</strong> ${status.currentPhase}<br>
+                <strong>Players:</strong><br>
+            `;
+            
+            players.forEach(p => {
+                html += `&nbsp;&nbsp;${p.name}: ${p.gold}g, 
+                    M:${p.resources.mana} V:${p.resources.vitality} 
+                    A:${p.resources.arcanum} Ae:${p.resources.aether}<br>`;
+            });
+            
+            document.getElementById('status-info').innerHTML = html;
+        }
+        
+        // Test functions
+        window.runFullCycle = async function() {
+            if (!gameScene) return;
+            
+            log('Starting full cycle test...', 'info');
+            const gfc = gameScene.gameFlowController;
+            
+            // Run through all phases
+            const phases = [
+                'territory_selection',
+                'construct_outfitting',
+                'resource_production',
+                'auction_phase',
+                'end_cycle_events'
+            ];
+            
+            for (let phase of phases) {
+                gfc.cycleManager.forceAdvanceToPhase(phase);
+                await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+            
+            log('Full cycle test completed!', 'success');
+        };
+        
+        window.testTerritorySelection = function() {
+            if (!gameScene) return;
+            
+            log('Testing territory selection...', 'info');
+            const gfc = gameScene.gameFlowController;
+            
+            // Force to territory phase
+            gfc.cycleManager.forceAdvanceToPhase('territory_selection');
+            
+            // Simulate claims
+            const territories = gfc.territoryGrid.territories;
+            gfc.territoryAcquisition.attemptClaim('player1', territories[0].id);
+            gfc.territoryAcquisition.attemptClaim('player2', territories[1].id);
+            
+            // Test dispute
+            gfc.territoryAcquisition.attemptClaim('player3', territories[1].id);
+            
+            log('Territory selection test completed', 'success');
+        };
+        
+        window.testConstructPlacement = function() {
+            if (!gameScene) return;
+            
+            log('Testing construct placement...', 'info');
+            const gfc = gameScene.gameFlowController;
+            
+            // Force to construct phase
+            gfc.cycleManager.forceAdvanceToPhase('construct_outfitting');
+            
+            // Find owned territories
+            const ownedTerritories = gfc.territoryGrid.territories.filter(t => t.ownerId);
+            
+            ownedTerritories.forEach((territory, index) => {
+                const constructTypes = ['mana_conduit', 'vitality_well', 'arcanum_extractor', 'aether_resonator'];
+                territory.construct = {
+                    type: constructTypes[index % 4],
+                    level: 1,
+                    ownerId: territory.ownerId
+                };
+                log(`Placed ${territory.construct.type} on territory ${territory.id}`, 'success');
+            });
+        };
+        
+        window.testResourceProduction = function() {
+            if (!gameScene) return;
+            
+            log('Testing resource production...', 'info');
+            const gfc = gameScene.gameFlowController;
+            
+            // Force to production phase
+            gfc.cycleManager.forceAdvanceToPhase('resource_production');
+            
+            // Production will run automatically
+            log('Resource production phase triggered', 'success');
+        };
+        
+        window.testResourceDecay = function() {
+            if (!gameScene) return;
+            
+            log('Testing resource decay...', 'info');
+            const gfc = gameScene.gameFlowController;
+            
+            // Give players some resources first
+            gfc.stateManager.gameState.players.forEach(p => {
+                p.resources.mana = 100;
+                p.resources.vitality = 100;
+                p.resources.arcanum = 100;
+                p.resources.aether = 50;
+            });
+            
+            // Force to end cycle phase
+            gfc.cycleManager.forceAdvanceToPhase('end_cycle_events');
+            
+            log('Resource decay test triggered', 'success');
+            updateStatus();
+        };
+        
+        window.skipToPhase = function(phase) {
+            if (!gameScene) return;
+            
+            log(`Skipping to ${phase}...`, 'info');
+            gameScene.gameFlowController.cycleManager.forceAdvanceToPhase(phase);
+        };
+        
+        window.showGameState = function() {
+            if (!gameScene) return;
+            
+            const state = gameScene.gameFlowController.stateManager.gameState;
+            console.log('Full Game State:', state);
+            log('Game state logged to console', 'info');
+        };
+        
+        window.resetGame = function() {
+            location.reload();
+        };
+        
+        // Auto-update status
+        setInterval(updateStatus, 2000);
+        
+        // Initial message
+        log('Full game test environment loaded. Use controls to test features.', 'info');
+    </script>
+</body>
+</html>

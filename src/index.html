@@ -144,6 +144,17 @@
             margin-right: 10px;
             vertical-align: middle;
         }
+        
+        #turn-timer {
+            font-size: 18px;
+            transition: color 0.3s ease;
+        }
+        
+        #timer-container {
+            border-top: 1px solid rgba(245, 197, 66, 0.3);
+            margin-top: 10px;
+            padding-top: 10px;
+        }
     </style>
 </head>
 <body>
@@ -159,6 +170,10 @@
                 <span id="game-cycle">1</span>
             </div>
             <div class="resource-display">
+                <span>Phase:</span>
+                <span id="game-phase">Territory Selection</span>
+            </div>
+            <div class="resource-display">
                 <span>Current Player:</span>
                 <div>
                     <span id="player-color" style="background-color: red;"></span>
@@ -168,6 +183,10 @@
             <div class="resource-display">
                 <span>Gold:</span>
                 <span id="gold-display">1000</span>
+            </div>
+            <div class="resource-display" id="timer-container" style="display: none;">
+                <span>Time Remaining:</span>
+                <span id="turn-timer" style="font-weight: bold; color: #f5c542;">--</span>
             </div>
         </div>
         

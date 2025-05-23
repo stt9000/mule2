@@ -151,18 +151,18 @@ export default class TimeManager {
         }
         
         try {
-            console.log('Updating all timers...');
+            // console.log('Updating all timers...');
             
             // Update global timer
             if (this.globalTimer && this.globalTimer.isActive && !this.globalTimer.isPaused) {
-                console.log(`Updating global timer: ${this.globalTimer.id}`);
+                // console.log(`Updating global timer: ${this.globalTimer.id}`);
                 this.updateSingleTimer(this.globalTimer); // Rename to avoid confusion
             }
             
             // Update player timers
             this.playerTimers.forEach((timer, playerId) => {
                 if (timer.isActive && !timer.isPaused) {
-                    console.log(`Updating player timer: ${playerId}`);
+                    // console.log(`Updating player timer: ${playerId}`);
                     this.updateSingleTimer(timer);
                 }
             });
@@ -182,7 +182,7 @@ export default class TimeManager {
         const secondsRemaining = Math.ceil(timer.remainingTime / 1000);
         const urgencyLevel = this.getUrgencyLevel(secondsRemaining);
         
-        console.log(`Timer ${timer.id}: ${secondsRemaining}s remaining (${urgencyLevel})`);
+        // console.log(`Timer ${timer.id}: ${secondsRemaining}s remaining (${urgencyLevel})`);
         
         // Broadcast update
         this.broadcastEvent('timer.update', {
@@ -200,7 +200,7 @@ export default class TimeManager {
         
         // Check for expiration
         if (timer.remainingTime <= 0) {
-            console.log(`Timer ${timer.id} expired!`);
+            // console.log(`Timer ${timer.id} expired!`);
             this.handleTimerExpired(timer);
         }
     }
@@ -564,13 +564,13 @@ export default class TimeManager {
     }
 
     broadcastEvent(eventName, data = {}) {
-        console.log(`Broadcasting timer event: ${eventName}`, data);
+        // console.log(`Broadcasting timer event: ${eventName}`, data);
         
         if (this.eventListeners[eventName]) {
-            console.log(`Found ${this.eventListeners[eventName].length} listeners for ${eventName}`);
+            // console.log(`Found ${this.eventListeners[eventName].length} listeners for ${eventName}`);
             this.eventListeners[eventName].forEach((callback, index) => {
                 try {
-                    console.log(`Calling listener ${index} for ${eventName}`);
+                    // console.log(`Calling listener ${index} for ${eventName}`);
                     callback(data);
                 } catch (error) {
                     console.error(`Error in event listener ${index}:`, error);
@@ -578,7 +578,7 @@ export default class TimeManager {
                 }
             });
         } else {
-            console.log(`No listeners found for event: ${eventName}`);
+            // console.log(`No listeners found for event: ${eventName}`);
         }
     }
 }

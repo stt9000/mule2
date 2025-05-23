@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Phase Advancement Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+            background-color: #1a1a1a;
+            color: #fff;
+        }
+        #log {
+            background: #2a2a2a;
+            padding: 15px;
+            border-radius: 5px;
+            max-height: 600px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        .phase { color: #00ff00; font-weight: bold; }
+        .turn { color: #00aaff; }
+        .action { color: #ffaa00; }
+        .error { color: #ff0000; }
+        .success { color: #00ff00; }
+        button {
+            background: #4a5aa8;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background: #5a6ab8;
+        }
+    </style>
+</head>
+<body>
+    <h1>Phase Advancement Test</h1>
+    <div>
+        <button onclick="startTest()">Start Test</button>
+        <button onclick="clearLog()">Clear Log</button>
+    </div>
+    <div id="log"></div>
+    
+    <script>
+        let gameWindow = null;
+        const log = document.getElementById('log');
+        
+        function addLog(message, className = '') {
+            const entry = document.createElement('div');
+            entry.className = className;
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            log.appendChild(entry);
+            log.scrollTop = log.scrollHeight;
+        }
+        
+        function clearLog() {
+            log.innerHTML = '';
+        }
+        
+        async function startTest() {
+            addLog('Opening game window...', 'phase');
+            gameWindow = window.open('http://localhost:8080', 'gameTest', 'width=1200,height=800');
+            
+            // Wait for game to load
+            await new Promise(resolve => setTimeout(resolve, 3000));
+            
+            if (!gameWindow || gameWindow.closed) {
+                addLog('Failed to open game window', 'error');
+                return;
+            }
+            
+            // Monitor console logs from game
+            addLog('Starting phase monitoring...', 'phase');
+            
+            // Inject monitoring code
+            try {
+                gameWindow.console.log = function(...args) {
+                    const message = args.join(' ');
+                    
+                    // Filter for important messages
+                    if (message.includes('Phase ended:') || 
+                        message.includes('Advancing to phase:') ||
+                        message.includes('turn_sequence.ended') ||
+                        message.includes('All players have completed') ||
+                        message.includes('Resolving territory') ||
+                        message.includes('Territory') && message.includes('owner set to') ||
+                        message.includes('NextPlayer called') ||
+                        message.includes('New index after increment')) {
+                        
+                        if (message.includes('Phase ended:')) {
+                            addLog(message, 'phase');
+                        } else if (message.includes('Advancing to phase:')) {
+                            addLog(message, 'phase');
+                        } else if (message.includes('turn_sequence.ended')) {
+                            addLog(message, 'success');
+                        } else if (message.includes('NextPlayer')) {
+                            addLog(message, 'turn');
+                        } else {
+                            addLog(message, 'action');
+                        }
+                    }
+                    
+                    // Call original console.log
+                    window.console.log.apply(window.console, args);
+                };
+                
+                addLog('Console monitoring injected', 'success');
+            } catch (e) {
+                addLog('Could not inject console monitoring: ' + e.message, 'error');
+            }
+            
+            // Test sequence
+            addLog('=== STARTING TEST SEQUENCE ===', 'phase');
+            
+            // Phase 1: Territory Selection
+            await testTerritorySelection();
+            
+            // Wait for phase advancement
+            await new Promise(resolve => setTimeout(resolve, 10000));
+            
+            // Phase 2: Check if construct phase started
+            await checkConstructPhase();
+        }
+        
+        async function testTerritorySelection() {
+            addLog('--- Territory Selection Phase ---', 'phase');
+            
+            // Click Buy Land
+            await clickButton('buy-land-btn');
+            await wait(500);
+            
+            // Click on territory
+            await clickCanvas(400, 300);
+            await wait(1000);
+            
+            // End Player 1 turn
+            await clickButton('end-turn-btn');
+            addLog('Player 1 turn ended', 'turn');
+            
+            // Wait for AI players
+            addLog('Waiting for AI players to complete turns...', 'turn');
+        }
+        
+        async function checkConstructPhase() {
+            addLog('--- Checking Construct Phase ---', 'phase');
+            
+            try {
+                const phaseText = gameWindow.document.getElementById('game-phase').textContent;
+                addLog(`Current phase: ${phaseText}`, 'phase');
+                
+                const playerName = gameWindow.document.getElementById('player-name').textContent;
+                addLog(`Current player: ${playerName}`, 'turn');
+                
+                if (phaseText.includes('Construct')) {
+                    addLog('SUCCESS: Construct phase reached!', 'success');
+                } else {
+                    addLog('ERROR: Still in ' + phaseText, 'error');
+                }
+            } catch (e) {
+                addLog('Error checking phase: ' + e.message, 'error');
+            }
+        }
+        
+        async function clickButton(buttonId) {
+            try {
+                const button = gameWindow.document.getElementById(buttonId);
+                if (button) {
+                    button.click();
+                    addLog(`Clicked button: ${buttonId}`, 'action');
+                } else {
+                    addLog(`Button not found: ${buttonId}`, 'error');
+                }
+            } catch (e) {
+                addLog(`Error clicking button: ${e.message}`, 'error');
+            }
+        }
+        
+        async function clickCanvas(x, y) {
+            try {
+                const canvas = gameWindow.document.querySelector('canvas');
+                if (canvas) {
+                    const rect = canvas.getBoundingClientRect();
+                    const event = new gameWindow.MouseEvent('pointerdown', {
+                        view: gameWindow,
+                        bubbles: true,
+                        cancelable: true,
+                        clientX: rect.left + x,
+                        clientY: rect.top + y
+                    });
+                    canvas.dispatchEvent(event);
+                    addLog(`Clicked canvas at (${x}, ${y})`, 'action');
+                } else {
+                    addLog('Canvas not found', 'error');
+                }
+            } catch (e) {
+                addLog(`Error clicking canvas: ${e.message}`, 'error');
+            }
+        }
+        
+        function wait(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
+        }
+    </script>
+</body>
+</html>

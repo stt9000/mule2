@@ -1,6 +1,10 @@
+import { RESOURCE_TYPES } from '../config/gameConfig.js';
+import ErrorHandler from '../utils/ErrorHandler.js';
+
 /**
  * Territory Model
  * Represents a magical territory (ley line nexus) in the game world
+ * Integrated with GameFlowController for state management
  */
 export default class Territory {
     /**
@@ -12,6 +16,7 @@ export default class Territory {
      * @param {string} config.type - Territory type from TERRITORY_TYPES
      * @param {number} config.x - X position on screen
      * @param {number} config.y - Y position on screen
+     * @param {GameFlowController} config.gameFlowController - Game flow controller instance
      */
     constructor(config) {
         this.id = config.id;
@@ -29,13 +34,44 @@ export default class Territory {
         
         // Game state
         this.owner = null;
+        this.ownerId = null; // Store player ID for persistence
         this.construct = null;
         this.improvements = [];
         
         // Production modifiers
-        this.baseModifiers = {}; // From territory type
+        this.baseModifiers = this.getDefaultBaseModifiers(); // From territory type
         this.improvementModifiers = {}; // From improvements
         this.interferenceModifiers = {}; // From neighboring territories
+        
+        // Production tracking
+        this.enchantmentLevel = 0;
+        this.lastProductionCycle = 0;
+        
+        // Visual state
+        this.isHighlighted = false;
+        this.isSelected = false;
+        
+        // Integration with game flow
+        this.gameFlow = config.gameFlowController;
+        this.eventSystem = config.gameFlowController;
+        
+        // Error handling
+        this.errorHandler = new ErrorHandler();
+    }
+    
+    /**
+     * Get default base modifiers for territory type
+     */
+    getDefaultBaseModifiers() {
+        const modifiers = {
+            ancient_grove: { vitality: 1.25, mana: 1.0, arcanum: 0.9 },
+            crystalline_cave: { vitality: 0.95, mana: 1.3, arcanum: 1.0 },
+            ruined_temple: { vitality: 1.0, mana: 1.1, arcanum: 1.2 },
+            mountain_peak: { vitality: 1.15, mana: 1.15, arcanum: 1.15 },
+            marshland: { vitality: 1.35, mana: 0.85, arcanum: 1.0 },
+            volcanic_field: { vitality: 1.0, mana: 1.0, arcanum: 1.25, aether: 1.1 }
+        };
+        return modifiers[this.type] || { vitality: 1.0, mana: 1.0, arcanum: 1.0 };
     }
     
     /**
@@ -49,13 +85,40 @@ export default class Territory {
         }
         
         // Resource types don't match? No production
-        const constructResourceType = this.construct.getResourceType();
+        // Get resource type from construct
+        let constructResourceType;
+        if (this.construct.getResourceType) {
+            constructResourceType = this.construct.getResourceType();
+        } else {
+            // Handle plain object constructs (legacy)
+            const resourceTypeMap = {
+                mana_conduit: 'mana',
+                vitality_well: 'vitality',
+                arcanum_extractor: 'arcanum',
+                aether_resonator: 'aether'
+            };
+            constructResourceType = resourceTypeMap[this.construct.type] || 'mana';
+        }
         if (resourceType !== constructResourceType) {
             return 0;
         }
         
-        // Base production from construct
-        let production = this.construct.getBaseProduction();
+        // Get base production from construct
+        let baseProduction = 10; // Default base production
+        if (this.construct.getBaseProduction) {
+            baseProduction = this.construct.getBaseProduction();
+        } else {
+            // Handle plain object constructs (legacy)
+            const baseProductionMap = {
+                mana_conduit: 15,
+                vitality_well: 12,
+                arcanum_extractor: 10,
+                aether_resonator: 8
+            };
+            baseProduction = baseProductionMap[this.construct.type] || 10;
+        }
+        
+        let production = baseProduction;
         
         // Apply territory type modifiers
         if (this.baseModifiers[resourceType]) {
@@ -63,7 +126,15 @@ export default class Territory {
         }
         
         // Apply construct level multiplier
-        production *= this.construct.getProductionMultiplier();
+        let levelMultiplier = 1.0;
+        if (this.construct.getProductionMultiplier) {
+            levelMultiplier = this.construct.getProductionMultiplier();
+        } else {
+            // Handle plain object constructs (legacy)
+            const level = this.construct.level || 1;
+            levelMultiplier = level === 1 ? 1.0 : level === 2 ? 1.5 : 2.0;
+        }
+        production *= levelMultiplier;
         
         // Apply improvements
         let improvementBonus = 0;
@@ -139,23 +210,88 @@ export default class Territory {
     
     /**
      * Set the owner of this territory
-     * @param {Object} player - The player who now owns this territory
+     * @param {Object|string} playerOrId - The player object or player ID
      */
-    setOwner(player) {
-        // Remove this territory from previous owner's list
-        if (this.owner) {
-            const index = this.owner.territories.indexOf(this);
-            if (index !== -1) {
-                this.owner.territories.splice(index, 1);
+    setOwner(playerOrId) {
+        try {
+            const playerId = typeof playerOrId === 'string' ? playerOrId : playerOrId?.id;
+            const previousOwner = this.owner;
+            const previousOwnerId = this.ownerId;
+            
+            // Remove this territory from previous owner's list
+            if (this.owner) {
+                const index = this.owner.territories.indexOf(this);
+                if (index !== -1) {
+                    this.owner.territories.splice(index, 1);
+                }
             }
+            
+            // Set new owner
+            if (typeof playerOrId === 'string') {
+                this.ownerId = playerOrId;
+                this.owner = null; // Will be resolved later
+            } else {
+                this.owner = playerOrId;
+                this.ownerId = playerOrId?.id || null;
+            }
+            
+            // Add to new owner's territories
+            if (this.owner) {
+                this.owner.territories.push(this);
+            }
+            
+            // Update through state manager if game flow is available
+            if (this.gameFlow && this.gameFlow.stateManager) {
+                const territories = this.gameFlow.stateManager.gameState.territories.map(t => 
+                    t.id === this.id ? { ...t, owner: this.ownerId } : t
+                );
+                
+                this.gameFlow.stateManager.updateGameState({ territories });
+                
+                // Log the action
+                this.gameFlow.stateManager.logPlayerAction(playerId, 'claim_territory', {
+                    territoryId: this.id,
+                    territoryType: this.type,
+                    previousOwner: previousOwnerId
+                });
+            }
+            
+            // Emit event if event system is available
+            if (this.eventSystem) {
+                this.eventSystem.broadcastEvent('territory.claimed', {
+                    territoryId: this.id,
+                    newOwner: playerId,
+                    previousOwner: previousOwnerId,
+                    cycle: this.gameFlow?.cycleManager?.currentCycle
+                });
+            }
+            
+            return true;
+        } catch (error) {
+            this.errorHandler?.handleError(error, 'Territory.setOwner');
+            return false;
+        }
+    }
+    
+    /**
+     * Check if territory can be claimed by player
+     */
+    canBeClaimedBy(playerId) {
+        if (!this.gameFlow) return this.owner === null;
+        
+        const currentPhase = this.gameFlow.cycleManager.currentPhase;
+        const turnManager = this.gameFlow.turnManager;
+        
+        // Get the player object from the state manager
+        const player = this.gameFlow.stateManager?.getPlayer(playerId);
+        if (!player) {
+            return false;
         }
         
-        this.owner = player;
-        
-        // Add to new owner's territories
-        if (player) {
-            player.territories.push(this);
-        }
+        return this.owner === null && 
+               this.ownerId === null &&
+               currentPhase === 'territory_selection' &&
+               turnManager.canPlayerAct(player, { type: 'claim_territory' });
     }
     
     /**
@@ -222,5 +358,219 @@ export default class Territory {
         }
         
         return worth;
+    }
+    
+    /**
+     * Check if territory has specific improvement
+     */
+    hasImprovement(improvementType) {
+        return this.improvements.some(imp => imp.type === improvementType);
+    }
+    
+    /**
+     * Calculate improvement bonuses
+     */
+    calculateImprovementBonus() {
+        let bonus = 0;
+        
+        this.improvements.forEach(improvement => {
+            if (improvement.isActive) {
+                switch (improvement.type) {
+                    case 'harmonic_anchor':
+                        bonus += 0.5;
+                        break;
+                    case 'focus_pillar':
+                        // This is handled separately for double production chance
+                        break;
+                }
+            }
+        });
+        
+        return bonus;
+    }
+    
+    /**
+     * Calculate magical interference
+     */
+    calculateInterference() {
+        let interference = 0;
+        
+        // Check for wardstone protection
+        const hasWardstone = this.hasImprovement('wardstone');
+        const baseInterference = 0.1; // Base 10% interference
+        
+        if (hasWardstone) {
+            interference = baseInterference * 0.5; // 50% reduction
+        } else {
+            interference = baseInterference;
+        }
+        
+        // Add interference from neighboring territories
+        for (const modifier of Object.values(this.interferenceModifiers)) {
+            if (typeof modifier === 'number') {
+                interference += modifier;
+            }
+        }
+        
+        return Math.max(0, Math.min(1, interference)); // Clamp between 0 and 1
+    }
+    
+    /**
+     * Get adjacent territories from a territory grid
+     */
+    getAdjacentTerritories(territoryGrid) {
+        const adjacent = [];
+        const directions = [
+            {q: -1, r: 0}, {q: 1, r: 0},
+            {q: 0, r: -1}, {q: 0, r: 1},
+            {q: -1, r: 1}, {q: 1, r: -1}
+        ];
+        
+        directions.forEach(dir => {
+            const newQ = this.q + dir.q;
+            const newR = this.r + dir.r;
+            const territory = territoryGrid.getTerritoryAt(newQ, newR);
+            if (territory) {
+                adjacent.push(territory);
+            }
+        });
+        
+        return adjacent;
+    }
+    
+    /**
+     * Serialize territory for saving/network
+     */
+    serialize() {
+        return {
+            id: this.id,
+            type: this.type,
+            q: this.q,
+            r: this.r,
+            x: this.x,
+            y: this.y,
+            ownerId: this.ownerId,
+            construct: this.construct?.serialize ? this.construct.serialize() : null,
+            improvements: this.improvements.map(i => i.serialize ? i.serialize() : i),
+            enchantmentLevel: this.enchantmentLevel,
+            lastProductionCycle: this.lastProductionCycle,
+            baseModifiers: this.baseModifiers,
+            improvementModifiers: this.improvementModifiers
+        };
+    }
+    
+    /**
+     * Restore territory from saved data
+     */
+    restoreFromData(data) {
+        this.ownerId = data.ownerId;
+        this.enchantmentLevel = data.enchantmentLevel || 0;
+        this.lastProductionCycle = data.lastProductionCycle || 0;
+        
+        // Restore modifiers
+        if (data.baseModifiers) {
+            this.baseModifiers = data.baseModifiers;
+        }
+        if (data.improvementModifiers) {
+            this.improvementModifiers = data.improvementModifiers;
+        }
+        
+        // Note: construct and improvements will need to be restored externally
+        // as they require proper object instantiation
+    }
+    
+    /**
+     * Get territory display info
+     */
+    getDisplayInfo() {
+        return {
+            id: this.id,
+            type: this.type,
+            typeName: this.getTypeName(),
+            position: { q: this.q, r: this.r, x: this.x, y: this.y },
+            owner: this.ownerId,
+            hasConstruct: !!this.construct,
+            constructType: this.construct?.type,
+            improvements: this.improvements.map(i => i.type || i),
+            production: this.calculateProductionSummary(),
+            modifiers: this.baseModifiers
+        };
+    }
+    
+    /**
+     * Get human-readable territory type name
+     */
+    getTypeName() {
+        const names = {
+            ancient_grove: 'Ancient Grove',
+            crystalline_cave: 'Crystalline Cave',
+            ruined_temple: 'Ruined Temple',
+            mountain_peak: 'Mountain Peak',
+            marshland: 'Marshland',
+            volcanic_field: 'Volcanic Field'
+        };
+        return names[this.type] || 'Unknown Territory';
+    }
+    
+    /**
+     * Calculate production summary for all resources
+     */
+    calculateProductionSummary() {
+        if (!this.construct) return null;
+        
+        const resourceType = this.construct.getResourceType ? 
+            this.construct.getResourceType() : this.construct.resourceType;
+        
+        const amount = this.calculateProduction(resourceType);
+        
+        return {
+            resourceType: resourceType,
+            amount: amount,
+            breakdown: {
+                base: this.construct.getBaseProduction ? 
+                    this.construct.getBaseProduction() : this.construct.baseProduction || 0,
+                terrainModifier: this.baseModifiers[resourceType] || 1.0,
+                constructLevel: this.construct.level || 1,
+                improvementBonus: this.calculateImprovementBonus(),
+                enchantmentBonus: this.enchantmentLevel * 0.1,
+                interference: this.calculateInterference()
+            }
+        };
+    }
+    
+    /**
+     * Check if territory is eligible for improvement
+     */
+    canAddImprovement(improvementType) {
+        // Check if already has this improvement
+        if (this.hasImprovement(improvementType)) {
+            return false;
+        }
+        
+        // Check improvement-specific requirements
+        switch (improvementType) {
+            case 'purification_circle':
+                // Can only be built on territories with negative modifiers
+                return Object.values(this.baseModifiers).some(mod => mod < 1.0);
+            default:
+                return true;
+        }
+    }
+    
+    /**
+     * Update territory state for new cycle
+     */
+    updateForNewCycle(currentCycle) {
+        // Update production tracking
+        if (this.construct && this.ownerId) {
+            this.lastProductionCycle = currentCycle;
+        }
+        
+        // Update improvements
+        this.improvements.forEach(improvement => {
+            if (improvement.updateForNewCycle) {
+                improvement.updateForNewCycle(currentCycle);
+            }
+        });
     }
 }

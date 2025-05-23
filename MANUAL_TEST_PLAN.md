@@ -1,539 +1,521 @@
-# Manual Test Plan: Phase 2, Step 4 - Turn Structure and Game Flow
+# Manual Test Plan: Phase 2, Step 5 - Territory Management System
 
 ## Overview
-This test plan covers manual testing of the game flow components implemented in Phase 2, Step 4. These tests should be performed to verify that all turn structure and game flow systems work correctly.
+This test plan covers manual testing of the territory management system implemented in Phase 2, Step 5. These tests verify territory claiming, improvements, visualization, and integration with the game flow system from Step 4.
 
 ## Prerequisites
 - Node.js environment set up
-- All Phase 2, Step 4 components implemented
+- All Phase 2, Step 4 components implemented (Game Flow)
+- All Phase 2, Step 5 components implemented (Territory Management)
+- Game server running (`npm start`)
+- Browser with developer console access
 - Basic understanding of M.U.L.E. game mechanics
 
 ## Test Environment Setup
 
-### 1. Create Test Players
-```javascript
-const testPlayers = [
-    { id: 'player1', name: 'Alice', gold: 1200 },
-    { id: 'player2', name: 'Bob', gold: 800 },
-    { id: 'player3', name: 'Charlie', gold: 1000 },
-    { id: 'player4', name: 'Diana', gold: 600 }
-];
+### 1. Start Game Server
+```bash
+npm start
 ```
 
-### 2. Initialize Game Flow Controller
-```javascript
-import { GameFlowController } from './src/models/index.js';
-const flowController = new GameFlowController({ 
-    autoSave: false, 
-    storageType: 'memory' 
-});
-```
+### 2. Open Game in Browser
+- Navigate to http://localhost:8080
+- Open browser developer console (F12)
+- Note: Game will auto-initialize with GameFlowController and TerritoryGrid
+
+### 3. Default Test Players
+The game creates 4 default players:
+- Player 1 (Red) - Starting gold: 1000
+- Player 2 (Blue) - Starting gold: 1000  
+- Player 3 (Green) - Starting gold: 1000
+- Player 4 (Yellow) - Starting gold: 1000
 
 ---
 
-## Test Suite 1: Game Initialization
+## Test Suite 1: Territory Grid Initialization
 
-### Test 1.1: Basic Game Initialization
-**Objective:** Verify game can be initialized with valid players
-
-**Steps:**
-1. Create GameFlowController instance
-2. Call `initializeGame()` with test players
-3. Verify initialization result
-
-**Expected Results:**
-- `initializeGame()` returns `{ success: true, gameId: <string> }`
-- Game status shows `isInitialized: true`
-- Player count matches input
-- Current cycle is 1
-- Current phase is 'territory_selection'
-
-**Test Code:**
-```javascript
-const result = await flowController.initializeGame(testPlayers);
-console.log('Init result:', result);
-console.log('Game status:', flowController.getGameStatus());
-```
-
-### Test 1.2: Invalid Initialization
-**Objective:** Verify proper error handling for invalid inputs
+### Test 1.1: Grid Generation
+**Objective:** Verify territory grid is created correctly
 
 **Steps:**
-1. Try to initialize with empty player array
-2. Try to initialize with null players
-3. Try to initialize twice
+1. Start new game
+2. Open browser console
+3. Execute: `window.gameScene = this.scene.scenes[1]`
+4. Execute: `console.log(window.gameScene.gameFlowController.territoryGrid.getStatistics())`
 
 **Expected Results:**
-- Empty players: `{ success: false, error: "At least one player is required" }`
-- Null players: Error caught and handled
-- Double initialization: Should work (reinitialize)
+- 48 total territories (8x6 grid)
+- Each territory has unique ID (territory_x_y)
+- Territory types distributed randomly among:
+  - Ancient Grove (Green)
+  - Crystalline Cave (Blue)
+  - Ruined Temple (Tan)
+  - Mountain Peak (Gray)
+  - Marshland (Olive)
+  - Volcanic Field (Reddish brown)
+
+### Test 1.2: Visual Representation
+**Objective:** Verify territories display correctly
+
+**Steps:**
+1. Observe game map after loading
+2. Count visible hexagons
+3. Verify color coding matches territory types
+
+**Expected Results:**
+- 48 hexagonal territories visible
+- Each territory shows type-appropriate color
+- Hexagons arranged in proper grid pattern
+- Territory labels visible
 
 ---
 
-## Test Suite 2: Game Cycle Management
+## Test Suite 2: Territory Selection and Claiming
 
-### Test 2.1: Phase Progression
-**Objective:** Verify phases advance in correct order
-
-**Steps:**
-1. Initialize game
-2. Record initial phase
-3. Call `flowController.cycleManager.advancePhase()` multiple times
-4. Observe phase changes
-
-**Expected Results:**
-- Phases progress: territory_selection → construct_outfitting → resource_production → auction_phase → end_cycle_events
-- After end_cycle_events, cycle increments and returns to territory_selection
-- Events are fired for each phase change
-
-**Test Code:**
-```javascript
-console.log('Initial phase:', flowController.getGameStatus().currentPhase);
-
-for (let i = 0; i < 6; i++) {
-    flowController.cycleManager.advancePhase();
-    const status = flowController.getGameStatus();
-    console.log(`Step ${i + 1}: Cycle ${status.currentCycle}, Phase ${status.currentPhase}`);
-}
-```
-
-### Test 2.2: Game Completion
-**Objective:** Verify game ends after maximum cycles
+### Test 2.1: Territory Selection UI
+**Objective:** Verify territory selection interface works
 
 **Steps:**
-1. Initialize game with maxCycles: 2
-2. Advance through all phases until game ends
-3. Verify game end event and final state
+1. Wait for Territory Selection phase
+2. Hover mouse over different territories
+3. Click on an unowned territory
+4. Observe visual feedback
 
 **Expected Results:**
-- Game ends after cycle 2, end_cycle_events phase
-- Game status shows `gameStatus: 'ended'`
-- Final results are calculated
-- Game end event is fired
+- Hover effect: Yellow border highlight
+- Cursor changes to pointer on hover
+- Click selects territory with pulsing yellow highlight
+- Territory details panel updates with:
+  - Territory ID
+  - Territory type
+  - Owner (None)
+  - Base modifiers
+
+### Test 2.2: Free Territory Claiming
+**Objective:** Verify players can claim territories
+
+**Steps:**
+1. During Player 1's turn in Territory Selection phase
+2. Click an unowned territory
+3. Verify claim success
+4. Check UI updates
+
+**Expected Results:**
+- Territory ownership transfers to Player 1
+- Territory border changes to player color (red)
+- No gold deducted (free claim)
+- Action logged in console
+- Turn advances to next player
 
 ---
 
-## Test Suite 3: Turn Management
+## Test Suite 3: Territory Disputes and Turn Order
 
-### Test 3.1: Turn Order Calculation
-**Objective:** Verify turn order follows M.U.L.E. rules (poorest first)
-
-**Steps:**
-1. Initialize game with players having different gold amounts
-2. Check initial turn order
-3. Modify player wealth and recalculate
-
-**Expected Results:**
-- Turn order: Diana (600) → Bob (800) → Charlie (1000) → Alice (1200)
-- Turn order updates when wealth changes
-
-**Test Code:**
-```javascript
-flowController.turnManager.calculateTurnOrder();
-const turnOrder = flowController.turnManager.turnOrder;
-console.log('Turn order:', turnOrder.map(p => `${p.name} (${p.gold}g)`));
-```
-
-### Test 3.2: Player Action Execution
-**Objective:** Verify player actions are processed correctly
+### Test 3.1: Turn Order by Wealth
+**Objective:** Verify poorest player goes first (M.U.L.E. rule)
 
 **Steps:**
-1. Start turn sequence
-2. Execute valid player action
-3. Execute invalid player action
-4. Verify action tracking
+1. In console: `window.gameScene.gameFlowController.stateManager.updateGameState({ players: [{...window.gameScene.gameFlowController.stateManager.gameState.players[0], gold: 1200}, {...window.gameScene.gameFlowController.stateManager.gameState.players[1], gold: 800}, {...window.gameScene.gameFlowController.stateManager.gameState.players[2], gold: 1000}, {...window.gameScene.gameFlowController.stateManager.gameState.players[3], gold: 600}] })`
+2. Wait for next Territory Selection phase
+3. Observe turn order
 
 **Expected Results:**
-- Valid actions succeed and are logged
-- Invalid actions fail with appropriate errors
-- Actions are tracked per player per cycle
+- Turn order: Player 4 (600g) → Player 2 (800g) → Player 3 (1000g) → Player 1 (1200g)
+- UI shows current player name and color
+- Only current player can claim territories
 
-**Test Code:**
-```javascript
-const testAction = { type: 'claim_territory', territoryId: 'test1' };
-const result = flowController.executePlayerAction('player1', testAction);
-console.log('Action result:', result);
-
-const actions = flowController.stateManager.getPlayerActions('player1');
-console.log('Player actions:', actions);
-```
-
-### Test 3.3: Turn Time Limits
-**Objective:** Verify turn timers work correctly
+### Test 3.2: Territory Disputes
+**Objective:** Verify dispute resolution when multiple players want same territory
 
 **Steps:**
-1. Set short turn time limit (5 seconds)
-2. Start a player turn
-3. Wait for timeout
-4. Verify forced turn end
+1. Set up test where multiple players have free claims
+2. Have them attempt to claim same valuable territory
+3. Let phase end
+4. Check dispute resolution
 
 **Expected Results:**
-- Timer starts when turn begins
-- Warning events fire at thresholds
-- Turn ends automatically on timeout
-- Next player's turn begins
+- Territory marked as disputed during phase
+- At phase end, poorest player wins dispute
+- Console shows dispute resolution event
+- Other players notified of outcome
+
+### Test 3.3: Out-of-Turn Actions
+**Objective:** Verify players cannot act out of turn
+
+**Steps:**
+1. During Player 1's turn
+2. Try to claim territory as Player 2
+3. Wait for Player 2's turn
+4. Try same action
+
+**Expected Results:**
+- Out-of-turn clicks ignored
+- Console may show "Not your turn" message
+- Actions only work during player's turn
+- Turn indicator clearly shows active player
 
 ---
 
-## Test Suite 4: Time Management
+## Test Suite 4: Territory Improvements
 
-### Test 4.1: Phase Timers
-**Objective:** Verify phase timers function correctly
-
-**Steps:**
-1. Start a phase with a short timer (3 seconds)
-2. Monitor timer updates
-3. Wait for expiration
-4. Verify phase advancement
-
-**Expected Results:**
-- Timer updates every second
-- Warning events at 30s and 10s thresholds
-- Phase advances automatically on expiration
-
-**Test Code:**
-```javascript
-flowController.on('timer.update', (data) => {
-    console.log(`Timer: ${data.remainingTime}s (${data.urgencyLevel})`);
-});
-
-flowController.on('timer.expired', (data) => {
-    console.log('Timer expired for phase:', data.phase);
-});
-
-flowController.timeManager.startPhaseTimer('test_phase', 5);
-```
-
-### Test 4.2: Player Time Banks
-**Objective:** Verify individual player time management
+### Test 4.1: Improvement Options
+**Objective:** Verify improvement system displays correctly
 
 **Steps:**
-1. Set player time banks
-2. Start player timers
-3. Monitor time deduction
-4. Test time bank depletion
+1. Own at least one territory
+2. Enter Construct Outfitting phase
+3. Select owned territory
+4. Check improvement options
 
 **Expected Results:**
-- Player time banks track correctly
-- Time is deducted from banks
-- Events fire when banks are low
+- Improvement options display:
+  - Wardstone (100 arcanum, 50 mana) - Reduces interference 50%
+  - Harmonic Anchor (150 arcanum, 100 mana) - +50% enchantment bonus
+  - Purification Circle (200 arcanum, 150 vitality) - Removes negative modifiers
+  - Focus Pillar (300 arcanum, 200 mana, 100 vitality) - 10% double production
+- Only affordable improvements are selectable
+- Costs clearly displayed
 
-**Test Code:**
-```javascript
-flowController.timeManager.setPlayerTimeBank('player1', 60); // 1 minute
-flowController.timeManager.startPlayerTimer('player1', 'territory_selection', 30);
-
-const timeBank = flowController.timeManager.getPlayerTimeBank('player1');
-console.log('Player1 time bank:', timeBank / 1000, 'seconds');
-```
-
-### Test 4.3: Pause and Resume
-**Objective:** Verify timer pause/resume functionality
+### Test 4.2: Building Improvements
+**Objective:** Verify improvement construction process
 
 **Steps:**
-1. Start multiple timers
-2. Pause all timers
-3. Wait a few seconds
-4. Resume timers
-5. Verify time doesn't advance during pause
+1. Ensure player has required resources
+2. Select owned territory
+3. Choose Wardstone improvement
+4. Confirm construction
+5. Note completion cycle (current + 2)
 
 **Expected Results:**
-- Timers stop counting during pause
-- Resume continues from paused time
-- No time is lost during pause period
+- Resources deducted immediately (100 arcanum, 50 mana)
+- Construction begins with "Under Construction" status
+- Completion cycle shown
+- Turn consumed by action
+- Cannot build duplicate improvements
+
+### Test 4.3: Construction Progress
+**Objective:** Verify multi-cycle construction
+
+**Steps:**
+1. Start improvement construction
+2. End turn and advance cycles
+3. Check construction status each cycle
+4. Verify completion at correct cycle
+
+**Expected Results:**
+- Construction persists across cycles
+- Status shows cycles remaining
+- Improvement activates at completion cycle
+- Visual indicator when complete
+- Effects apply immediately upon completion
 
 ---
 
-## Test Suite 5: State Management
+## Test Suite 5: Production and Modifiers
 
-### Test 5.1: State Validation
-**Objective:** Verify game state validation works
-
-**Steps:**
-1. Initialize game with valid state
-2. Modify state to invalid values
-3. Attempt state update
-4. Verify validation catches errors
-
-**Expected Results:**
-- Valid states pass validation
-- Invalid states are rejected
-- Validation errors are descriptive
-
-**Test Code:**
-```javascript
-// Test valid state
-const isValid = flowController.stateManager.validateGameState();
-console.log('State valid:', isValid);
-
-// Test invalid state update
-const result = flowController.stateManager.updateGameState({
-    currentCycle: -1 // Invalid
-});
-console.log('Invalid update result:', result);
-```
-
-### Test 5.2: State History
-**Objective:** Verify state snapshots and history
+### Test 5.1: Territory Production Calculation
+**Objective:** Verify production calculations with modifiers
 
 **Steps:**
-1. Take initial snapshot
-2. Make several state changes
-3. Take more snapshots
-4. Restore previous snapshot
-5. Verify restoration
+1. Place Mana Conduit on Crystalline Cave (+30% mana)
+2. Check base production
+3. Add Harmonic Anchor improvement
+4. Check enhanced production
 
 **Expected Results:**
-- Snapshots capture complete state
-- History is maintained with limits
-- Restoration works correctly
+- Base production: 10-25 mana
+- With terrain bonus: +30% 
+- With improvement: Additional +50% enchantment
+- Interference: -10% (or -5% with Wardstone)
+- Final calculation shown in territory details
 
-**Test Code:**
-```javascript
-const snapshotId = flowController.stateManager.saveStateSnapshot('Test snapshot');
-console.log('Snapshot saved:', snapshotId);
-
-// Make changes
-flowController.stateManager.updateGameState({ testValue: 123 });
-
-// Restore
-const restored = flowController.stateManager.restoreStateSnapshot(snapshotId);
-console.log('Restoration result:', restored);
-```
-
-### Test 5.3: Action Logging
-**Objective:** Verify player actions are logged correctly
+### Test 5.2: Improvement Effects
+**Objective:** Verify improvement effects apply correctly
 
 **Steps:**
-1. Execute various player actions
-2. Query action history
-3. Verify action details
+1. Test each improvement type:
+   - Wardstone on territory with interference
+   - Harmonic Anchor on enchanted territory
+   - Purification Circle on Marshland (-15% mana)
+   - Focus Pillar production doubling
 
 **Expected Results:**
-- All actions are logged with timestamps
-- Actions include player ID, type, and details
-- History can be queried by player and cycle
+- Wardstone: Interference reduced from 10% to 5%
+- Harmonic Anchor: +50% to enchantment bonuses
+- Purification Circle: Negative modifiers become neutral (1.0)
+- Focus Pillar: 10% chance to double production each cycle
+
+### Test 5.3: Production Phase
+**Objective:** Verify resources produced correctly
+
+**Steps:**
+1. Place various constructs on territories
+2. Enter Resource Production phase
+3. Check resource gains for each player
+4. Verify calculations match expected
+
+**Expected Results:**
+- Each territory with construct produces resources
+- Amount based on: base * terrain * level * improvements - interference
+- Resources added to player inventory
+- Production log shows details
+- Visual effects during production
 
 ---
 
-## Test Suite 6: Persistence System
+## Test Suite 6: Visual Feedback and UI
 
-### Test 6.1: Save and Load
-**Objective:** Verify save/load functionality
-
-**Steps:**
-1. Initialize and play partial game
-2. Save game state
-3. Load saved state
-4. Verify game continues correctly
-
-**Expected Results:**
-- Save operation succeeds
-- Load operation restores exact state
-- Game can continue from loaded state
-
-**Test Code:**
-```javascript
-// Save
-const saveResult = await flowController.saveGame('test_save');
-console.log('Save result:', saveResult);
-
-// Load
-const loadResult = await flowController.loadGame('test_save');
-console.log('Load result:', loadResult);
-```
-
-### Test 6.2: Save Slot Management
-**Objective:** Verify save slot operations
+### Test 6.1: Territory Visual States
+**Objective:** Verify visual feedback for territory states
 
 **Steps:**
-1. Create multiple saves
-2. List save slots
-3. Delete specific saves
-4. Verify slot management
+1. Observe unowned territories
+2. Claim a territory
+3. Select different territories
+4. Hover over territories
 
 **Expected Results:**
-- Multiple saves can coexist
-- Save list shows metadata
-- Deletion works correctly
+- Unowned: White border, terrain color fill
+- Owned: Player color border (4px), terrain color fill
+- Selected: Pulsing yellow highlight
+- Hovered: Yellow border (3px)
+- Territory type label visible
+- Smooth visual transitions
 
-**Test Code:**
-```javascript
-const slots = await flowController.getSaveSlots();
-console.log('Available saves:', slots);
-
-const deleteResult = await flowController.deleteSave('test_save');
-console.log('Delete result:', deleteResult);
-```
-
-### Test 6.3: Auto-save
-**Objective:** Verify automatic saving works
+### Test 6.2: UI Panel Updates
+**Objective:** Verify UI panels update correctly
 
 **Steps:**
-1. Enable auto-save with short interval
-2. Play game for several cycles
-3. Check for auto-save files
-4. Disable auto-save
+1. Select different territories
+2. Change game phases
+3. Switch players
+4. Build improvements
 
 **Expected Results:**
-- Auto-saves are created periodically
-- Auto-save doesn't interfere with gameplay
-- Auto-save can be disabled
+- Territory panel shows:
+  - Territory ID and type
+  - Owner name or "None"
+  - Construct type and level
+  - Improvements list
+  - Production details
+- Player panel updates:
+  - Current player name
+  - Player color indicator
+  - Gold amount
+  - Resource counts
+- Phase indicator updates
+
+### Test 6.3: Status Messages
+**Objective:** Verify status messages display correctly
+
+**Steps:**
+1. Perform various actions
+2. Trigger warnings (timer)
+3. Cause errors (invalid actions)
+
+**Expected Results:**
+- Success messages in default color
+- Warnings in yellow/orange
+- Errors in red
+- Messages auto-dismiss after 3 seconds
+- Critical messages persist longer
 
 ---
 
-## Test Suite 7: Event System
+## Test Suite 7: Save/Load with Territories
 
-### Test 7.1: Event Broadcasting
-**Objective:** Verify event system works correctly
-
-**Steps:**
-1. Subscribe to various events
-2. Trigger events through gameplay
-3. Verify events are received
-4. Test event unsubscription
-
-**Expected Results:**
-- Events fire at correct times
-- Event data is accurate
-- Unsubscription prevents further events
-
-**Test Code:**
-```javascript
-const eventLog = [];
-
-flowController.on('phase.started', (data) => {
-    eventLog.push(`Phase started: ${data.phase}`);
-});
-
-flowController.on('turn.started', (data) => {
-    eventLog.push(`Turn started: ${data.player.name}`);
-});
-
-// Play game and check eventLog
-```
-
-### Test 7.2: Event Error Handling
-**Objective:** Verify error handling in event callbacks
+### Test 7.1: Save Territory State
+**Objective:** Verify territory state saves correctly
 
 **Steps:**
-1. Subscribe event handler that throws error
-2. Trigger event
-3. Verify game continues despite callback error
+1. Claim several territories
+2. Build improvements (some complete, some in progress)
+3. Place constructs
+4. Save game (manual or auto-save)
+5. Check console: `window.gameScene.gameFlowController.saveGame('test_save')`
 
 **Expected Results:**
-- Callback errors don't crash game
-- Other event handlers still work
-- Errors are logged appropriately
+- Save completes successfully
+- Console shows save confirmation
+- Territory ownership preserved
+- Improvement states saved
+- Construction progress tracked
+
+### Test 7.2: Load Territory State
+**Objective:** Verify territory state loads correctly
+
+**Steps:**
+1. After saving, refresh browser
+2. Load saved game
+3. Verify all territory states
+4. Continue playing
+
+**Expected Results:**
+- All territories show correct owners
+- Improvements at correct state
+- Construction timers resume
+- Visual state matches saved data
+- Can continue game normally
 
 ---
 
-## Test Suite 8: Integration Testing
+## Test Suite 8: Phase Integration
 
-### Test 8.1: Complete Game Flow
-**Objective:** Verify all systems work together
-
-**Steps:**
-1. Initialize 4-player game
-2. Play through complete cycles
-3. Use all major features (save/load, pause/resume)
-4. Complete game to end
-
-**Expected Results:**
-- Game flows smoothly from start to finish
-- All systems interact correctly
-- No memory leaks or performance issues
-
-### Test 8.2: Error Recovery
-**Objective:** Verify system resilience
+### Test 8.1: Phase-Specific Territory Behavior
+**Objective:** Verify territory system respects game phases
 
 **Steps:**
-1. Force various error conditions
-2. Verify graceful handling
-3. Test recovery mechanisms
+1. Test each phase:
+   - Territory Selection: Try claiming
+   - Construct Outfitting: Try improvements
+   - Resource Production: Check production
+   - Auction: Try territory actions
+   - End Cycle: Check dispute resolution
 
 **Expected Results:**
-- Errors are handled gracefully
-- Game state remains consistent
-- Recovery options work when available
+- Territory Selection: Can claim unowned territories
+- Construct Outfitting: Can only modify own territories
+- Resource Production: Automatic, no territory actions
+- Auction: No territory modifications allowed
+- End Cycle: Disputes resolved, no player actions
+
+### Test 8.2: Timer Integration
+**Objective:** Verify timers affect territory actions
+
+**Steps:**
+1. Start territory action
+2. Let phase timer expire
+3. Start action with low time
+4. Observe warnings
+
+**Expected Results:**
+- Timer warnings at 30s and 10s
+- Actions cancelled on timeout
+- Incomplete improvements lost
+- Turn advances automatically
 
 ---
 
-## Test Suite 9: Performance Testing
+## Test Suite 9: Error Handling and Edge Cases
 
-### Test 9.1: Memory Usage
-**Objective:** Verify no memory leaks
-
-**Steps:**
-1. Play extended game sessions
-2. Monitor memory usage
-3. Create/destroy many game instances
-
-**Expected Results:**
-- Memory usage remains stable
-- No significant memory leaks
-- Cleanup works properly
-
-### Test 9.2: Timer Performance
-**Objective:** Verify timer system performance
+### Test 9.1: Invalid Territory Actions
+**Objective:** Verify error handling for invalid actions
 
 **Steps:**
-1. Run many simultaneous timers
-2. Test rapid timer creation/destruction
-3. Monitor performance impact
+1. Try to claim owned territory
+2. Build improvement without resources
+3. Place construct on enemy territory
+4. Build duplicate improvements
+5. Act out of turn
 
 **Expected Results:**
-- Timer system handles load well
-- No significant performance degradation
-- Timers clean up properly
+- Clear error messages display
+- "Territory already owned"
+- "Insufficient resources"
+- "Not your territory"
+- "Improvement already exists"
+- Game state remains stable
+
+### Test 9.2: Rapid Actions
+**Objective:** Verify system handles rapid inputs
+
+**Steps:**
+1. Click territories rapidly
+2. Spam action buttons
+3. Quick mouse movements
+4. Multiple simultaneous actions
+
+**Expected Results:**
+- Actions properly throttled
+- No duplicate claims
+- No visual glitches
+- Performance remains smooth
 
 ---
 
-## Manual Test Execution
+## Test Suite 10: Complete Gameplay Flow
 
-### Running Tests
-1. Open browser console or Node.js environment
-2. Import test modules
-3. Execute test code snippets
-4. Verify expected results
-5. Log any discrepancies
+### Test 10.1: Full Cycle with Territories
+**Objective:** Verify complete game cycle with all territory features
 
-### Test Results Documentation
-For each test, record:
-- Test name and objective
-- Actual results vs expected
-- Any errors or unexpected behavior
-- Screenshots/logs if applicable
-- Pass/Fail status
+**Steps:**
+1. Start new 4-player game
+2. Cycle 1: Each player claims 1 territory
+3. Build improvements on some territories
+4. Place constructs
+5. Go through production phase
+6. Continue for 3-4 cycles
+7. Save and reload mid-game
 
-### Bug Reporting
-If bugs are found:
-- Document exact steps to reproduce
-- Include error messages and stack traces
-- Note browser/environment details
-- Assign severity level
-- Suggest potential fixes
+**Expected Results:**
+- All features work together smoothly
+- Turn order updates based on wealth
+- Production calculated correctly
+- Improvements complete on schedule
+- Save/load preserves all state
+- No performance degradation
+
+### Test 10.2: End Game
+**Objective:** Verify game ends correctly with territories
+
+**Steps:**
+1. Play to final cycle
+2. Check final scoring
+3. Verify territory values counted
+
+**Expected Results:**
+- Territories add to final score (50 each)
+- Improvements add value
+- Constructs counted (75 per level)
+- Winner determined correctly
 
 ---
 
-## Success Criteria
+## Test Summary Checklist
 
-All tests should pass with:
-- ✅ Game initializes correctly with valid inputs
-- ✅ Phase progression follows correct sequence  
-- ✅ Turn management respects M.U.L.E. rules
-- ✅ Timers function accurately and reliably
-- ✅ State validation catches invalid data
-- ✅ Save/load preserves game state exactly
-- ✅ Events fire at appropriate times
-- ✅ Error handling is graceful and informative
-- ✅ Performance is acceptable under normal load
-- ✅ Memory usage is stable over time
+### Core Functionality
+- [ ] Territory grid generates correctly (8x6)
+- [ ] All 6 terrain types display properly
+- [ ] Territory selection UI works smoothly
+- [ ] Free claiming system functions
+- [ ] Turn order follows wealth rule
+- [ ] Territory disputes resolve correctly
 
-## Test Environment Notes
+### Improvements System  
+- [ ] All 4 improvement types available
+- [ ] Resource costs enforced
+- [ ] Multi-cycle construction works
+- [ ] Effects apply correctly
+- [ ] Cannot build duplicates
 
-- Use multiple browsers for compatibility testing
-- Test with different player counts (2-4 players)
-- Vary game settings (cycle counts, time limits)
-- Test edge cases (very short/long timers)
-- Verify mobile device compatibility if applicable
+### Visual/UI
+- [ ] Territory colors match types
+- [ ] Owner borders display correctly
+- [ ] Hover/selection effects work
+- [ ] UI panels update dynamically
+- [ ] Status messages clear and timely
+
+### Integration
+- [ ] Phase restrictions enforced
+- [ ] Timer warnings display
+- [ ] Save/load preserves all territory data
+- [ ] Production calculations accurate
+- [ ] Error messages helpful
+
+### Performance
+- [ ] No lag with all territories claimed
+- [ ] Smooth animations throughout
+- [ ] Quick state updates
+- [ ] Stable memory usage
+
+## Known Issues Log
+_Document any bugs found during testing:_
+
+---
+
+## Test Environment
+- **Browser:** Chrome/Firefox/Safari
+- **Node Version:** 14+
+- **Screen Resolution:** 1920x1080 recommended
+- **Test Date:** [Current Date]
+- **Build Version:** Phase 2 Step 5 Complete

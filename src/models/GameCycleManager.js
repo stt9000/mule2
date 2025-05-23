@@ -1,12 +1,15 @@
 import { GAME_SETTINGS } from '../config/gameConfig.js';
 import ErrorHandler from '../utils/ErrorHandler.js';
+import ResourceProductionCalculator from './ResourceProductionCalculator.js';
+import ResourceStorage from './ResourceStorage.js';
+import ResourceDecay from './ResourceDecay.js';
 
 /**
  * GameCycleManager
  * Manages game cycles and phase progression
  */
 export default class GameCycleManager {
-    constructor(gameConfig = {}) {
+    constructor(gameConfig = {}, gameFlow = null) {
         this.currentCycle = 1;
         this.maxCycles = gameConfig.maxCycles || GAME_SETTINGS.TOTAL_CYCLES;
         this.currentPhase = 'territory_selection';
@@ -20,10 +23,16 @@ export default class GameCycleManager {
         ];
         this.phaseIndex = 0;
         this.gameState = 'active'; // 'active', 'paused', 'ended'
+        this.gameFlow = gameFlow; // Reference to GameFlowController
         
         // Event system
         this.eventListeners = {};
         this.errorHandler = new ErrorHandler();
+        
+        // Resource production components
+        this.resourceCalculator = null;
+        this.resourceStorage = new ResourceStorage();
+        this.resourceDecay = new ResourceDecay();
         
         // Phase configurations
         this.phaseConfigs = {
@@ -80,6 +89,7 @@ export default class GameCycleManager {
      */
     advancePhase() {
         try {
+            console.log(`GameCycleManager.advancePhase called - current phase: ${this.currentPhase}, index: ${this.phaseIndex}`);
             this.endCurrentPhase();
             this.phaseIndex++;
             
@@ -91,6 +101,7 @@ export default class GameCycleManager {
                 }
             } else {
                 this.currentPhase = this.cyclePhases[this.phaseIndex];
+                console.log(`Advancing to phase: ${this.currentPhase}`);
                 this.startCurrentPhase();
             }
         } catch (error) {
@@ -148,6 +159,17 @@ export default class GameCycleManager {
         try {
             this.clearPhaseTimer();
             
+            // Phase-specific cleanup
+            switch (this.currentPhase) {
+                case 'territory_selection':
+                    // Resolve all territory disputes before ending phase
+                    if (this.gameFlow?.territoryAcquisition) {
+                        console.log('Resolving territory disputes at end of territory selection phase');
+                        this.gameFlow.territoryAcquisition.resolveDisputes();
+                    }
+                    break;
+            }
+            
             this.broadcastEvent('phase.ended', { 
                 phase: this.currentPhase, 
                 cycle: this.currentCycle 
@@ -179,12 +201,47 @@ export default class GameCycleManager {
      * Execute resource production phase
      */
     executeResourceProduction() {
-        this.broadcastEvent('resource_production.started', {
-            cycle: this.currentCycle
-        });
+        console.log('=== RESOURCE PRODUCTION PHASE ===');
         
-        // Auto-advance after production calculations
-        this.schedulePhaseAdvance(this.phaseConfigs.resource_production.timeLimit);
+        try {
+            // Initialize calculator if needed
+            if (!this.resourceCalculator) {
+                this.resourceCalculator = new ResourceProductionCalculator(this.gameFlow);
+            }
+            
+            // Calculate all production
+            const productionResults = this.resourceCalculator.calculateCycleProduction();
+            
+            // Broadcast production started event
+            this.broadcastEvent('resource_production.started', {
+                cycle: this.currentCycle,
+                results: productionResults
+            });
+            
+            // Apply production to players with visual delays
+            productionResults.playerTotals.forEach((playerTotal, index) => {
+                setTimeout(() => {
+                    this.applyProductionToPlayer(playerTotal);
+                }, index * 500);
+            });
+            
+            // Show production summary after all animations
+            const totalDelay = productionResults.playerTotals.length * 500 + 1000;
+            setTimeout(() => {
+                this.broadcastEvent('resource_production.completed', {
+                    cycle: this.currentCycle,
+                    summary: this.generateProductionSummary(productionResults)
+                });
+                
+                // Auto-advance after showing summary
+                this.schedulePhaseAdvance(5); // Give 5 seconds to view summary
+            }, totalDelay);
+            
+        } catch (error) {
+            this.errorHandler.handleError(error, 'GameCycleManager.executeResourceProduction');
+            // Still advance phase on error
+            this.schedulePhaseAdvance(this.phaseConfigs.resource_production.timeLimit);
+        }
     }
 
     /**
@@ -214,12 +271,138 @@ export default class GameCycleManager {
     }
 
     /**
+     * Apply production results to a player
+     */
+    applyProductionToPlayer(playerTotal) {
+        try {
+            const player = this.gameFlow.game.getPlayerById(playerTotal.playerId);
+            if (!player) {
+                console.error(`Player ${playerTotal.playerId} not found`);
+                return;
+            }
+            
+            // Apply resources with storage handling
+            const storageResults = this.resourceStorage.addResources(player, playerTotal.resources);
+            
+            // Broadcast individual territory production events
+            playerTotal.territories.forEach(territory => {
+                this.broadcastEvent('territory.produced', {
+                    playerId: player.id,
+                    territoryId: territory.territoryId,
+                    resource: territory.resource,
+                    amount: territory.amount,
+                    terrainType: territory.terrainType
+                });
+            });
+            
+            // Broadcast player production summary
+            this.broadcastEvent('player.production_applied', {
+                playerId: player.id,
+                playerName: player.name,
+                resources: playerTotal.resources,
+                storageResults: storageResults
+            });
+            
+        } catch (error) {
+            this.errorHandler.handleError(error, 'GameCycleManager.applyProductionToPlayer');
+        }
+    }
+    
+    /**
+     * Generate production summary
+     */
+    generateProductionSummary(productionResults) {
+        const summary = {
+            cycleNumber: productionResults.cycleNumber,
+            totalProduction: {
+                mana: 0,
+                vitality: 0,
+                arcanum: 0,
+                aether: 0
+            },
+            playerSummaries: [],
+            topProducers: {}
+        };
+        
+        // Calculate totals and find top producers
+        productionResults.playerTotals.forEach(playerTotal => {
+            // Add to total production
+            Object.entries(playerTotal.resources).forEach(([resource, amount]) => {
+                summary.totalProduction[resource] += amount;
+                
+                // Track top producer for each resource
+                if (!summary.topProducers[resource] || 
+                    amount > summary.topProducers[resource].amount) {
+                    summary.topProducers[resource] = {
+                        playerId: playerTotal.playerId,
+                        playerName: playerTotal.playerName,
+                        amount: amount
+                    };
+                }
+            });
+            
+            // Add player summary
+            summary.playerSummaries.push({
+                playerId: playerTotal.playerId,
+                playerName: playerTotal.playerName,
+                territoryCount: playerTotal.territories.length,
+                totalResources: playerTotal.resources
+            });
+        });
+        
+        return summary;
+    }
+
+    /**
      * Process resource decay at end of cycle
      */
     processResourceDecay() {
-        this.broadcastEvent('resource_decay.processing', {
-            cycle: this.currentCycle
-        });
+        try {
+            console.log('=== PROCESSING RESOURCE DECAY ===');
+            
+            // Get all players
+            const players = this.gameFlow.game.players;
+            
+            // Apply decay to all players
+            const decayResults = this.resourceDecay.applyDecayToAllPlayers(players);
+            
+            // Generate summary
+            const decaySummary = this.resourceDecay.generateDecaySummary(decayResults);
+            
+            // Broadcast decay events
+            this.broadcastEvent('resource_decay.processing', {
+                cycle: this.currentCycle,
+                results: decayResults,
+                summary: decaySummary
+            });
+            
+            // Show individual player decay with delays
+            decayResults.forEach((result, index) => {
+                const totalDecay = Object.values(result.decayed).reduce((sum, val) => sum + val, 0);
+                if (totalDecay > 0) {
+                    setTimeout(() => {
+                        this.broadcastEvent('player.resources_decayed', {
+                            playerId: result.playerId,
+                            playerName: result.playerName,
+                            decayed: result.decayed,
+                            preserved: result.preserved
+                        });
+                    }, index * 300);
+                }
+            });
+            
+            // Broadcast completion after all animations
+            const totalDelay = decayResults.length * 300 + 500;
+            setTimeout(() => {
+                this.broadcastEvent('resource_decay.completed', {
+                    cycle: this.currentCycle,
+                    summary: decaySummary
+                });
+            }, totalDelay);
+            
+        } catch (error) {
+            this.errorHandler.handleError(error, 'GameCycleManager.processResourceDecay');
+        }
     }
 
     /**
