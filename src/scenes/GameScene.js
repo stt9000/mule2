@@ -361,16 +361,20 @@ export default class GameScene extends Phaser.Scene {
         // Create dialog container
         const dialogContainer = document.createElement('div');
         dialogContainer.id = 'construct-dialog';
-        dialogContainer.style.position = 'absolute';
-        dialogContainer.style.top = '50%';
-        dialogContainer.style.left = '50%';
-        dialogContainer.style.transform = 'translate(-50%, -50%)';
-        dialogContainer.style.backgroundColor = 'rgba(20, 20, 20, 0.95)';
-        dialogContainer.style.border = '2px solid #FFD700';
-        dialogContainer.style.borderRadius = '10px';
-        dialogContainer.style.padding = '20px';
-        dialogContainer.style.zIndex = '200';
-        dialogContainer.style.minWidth = '400px';
+        dialogContainer.style.cssText = `
+            position: fixed !important;
+            top: 50% !important;
+            left: 50% !important;
+            transform: translate(-50%, -50%) !important;
+            background-color: rgba(20, 20, 20, 0.95) !important;
+            border: 2px solid #FFD700 !important;
+            border-radius: 10px !important;
+            padding: 20px !important;
+            z-index: 10000 !important;
+            min-width: 400px !important;
+            display: block !important;
+            visibility: visible !important;
+        `;
         
         // Title
         const title = document.createElement('h3');
@@ -388,6 +392,7 @@ export default class GameScene extends Phaser.Scene {
             { type: 'aether_resonator', name: 'Aether Resonator', cost: 200, description: 'Channels rare aether' }
         ];
         
+        console.log('Creating construct buttons...');
         constructTypes.forEach(construct => {
             const button = document.createElement('button');
             button.style.display = 'block';
@@ -426,10 +431,14 @@ export default class GameScene extends Phaser.Scene {
                 // Remove dialog first
                 const dialog = document.getElementById('construct-dialog');
                 if (dialog && dialog.parentNode) {
+                    console.log('Dialog being removed after button click');
                     dialog.parentNode.removeChild(dialog);
                 }
                 // Then execute callback
                 console.log('Calling callback with:', construct.type);
+                if (this.isShowingConstructDialog) {
+                    this.isShowingConstructDialog = false;
+                }
                 callback(construct.type);
             };
             
@@ -453,28 +462,65 @@ export default class GameScene extends Phaser.Scene {
         cancelButton.onclick = () => {
             const dialog = document.getElementById('construct-dialog');
             if (dialog && dialog.parentNode) {
+                console.log('Cancel button clicked, removing dialog');
                 dialog.parentNode.removeChild(dialog);
+            }
+            if (this.isShowingConstructDialog) {
+                this.isShowingConstructDialog = false;
             }
         };
         
         dialogContainer.appendChild(cancelButton);
         
         // Add to game container
-        document.getElementById('game-container').appendChild(dialogContainer);
-        
-        // Add click outside to close
-        setTimeout(() => {
-            const closeOnClickOutside = (e) => {
-                if (!dialogContainer.contains(e.target)) {
-                    const dialog = document.getElementById('construct-dialog');
-                    if (dialog && dialog.parentNode) {
-                        dialog.parentNode.removeChild(dialog);
-                    }
-                    document.removeEventListener('click', closeOnClickOutside);
+        const gameContainer = document.getElementById('game-container');
+        if (gameContainer) {
+            gameContainer.appendChild(dialogContainer);
+            console.log('Dialog added to game container');
+            
+            // Verify dialog is visible
+            setTimeout(() => {
+                const dialog = document.getElementById('construct-dialog');
+                if (dialog) {
+                    console.log('Dialog still exists after creation');
+                    console.log('Dialog display:', dialog.style.display);
+                    console.log('Dialog visibility:', dialog.style.visibility);
+                    console.log('Dialog offsetParent:', dialog.offsetParent !== null);
+                    console.log('Dialog dimensions:', dialog.offsetWidth, 'x', dialog.offsetHeight);
+                } else {
+                    console.error('Dialog disappeared after creation!');
                 }
-            };
-            document.addEventListener('click', closeOnClickOutside);
-        }, 100); // Small delay to prevent immediate closure
+            }, 100);
+        } else {
+            console.error('Game container not found!');
+            document.body.appendChild(dialogContainer);
+        }
+        
+        // Add click outside to close - DISABLED for debugging
+        // setTimeout(() => {
+        //     const closeOnClickOutside = (e) => {
+        //         if (!dialogContainer.contains(e.target)) {
+        //             const dialog = document.getElementById('construct-dialog');
+        //             if (dialog && dialog.parentNode) {
+        //                 dialog.parentNode.removeChild(dialog);
+        //             }
+        //             document.removeEventListener('click', closeOnClickOutside);
+        //         }
+        //     };
+        //     document.addEventListener('click', closeOnClickOutside);
+        // }, 100); // Small delay to prevent immediate closure
+        
+        console.log('Dialog setup complete - click outside handler DISABLED');
+    }
+    
+    // Helper method to reset dialog state if it gets stuck
+    resetConstructDialogState() {
+        console.log('Resetting construct dialog state');
+        this.isShowingConstructDialog = false;
+        const dialog = document.getElementById('construct-dialog');
+        if (dialog && dialog.parentNode) {
+            dialog.parentNode.removeChild(dialog);
+        }
     }
     
     harvestResources() {
@@ -909,10 +955,28 @@ export default class GameScene extends Phaser.Scene {
             return;
         }
         
+        // Add a flag to prevent multiple dialogs
+        if (this.isShowingConstructDialog) {
+            console.log('Already showing construct dialog, ignoring');
+            // Check if dialog actually exists
+            const existingDialog = document.getElementById('construct-dialog');
+            if (!existingDialog) {
+                console.log('Flag was set but no dialog exists, resetting flag');
+                this.isShowingConstructDialog = false;
+            } else {
+                return;
+            }
+        }
+        this.isShowingConstructDialog = true;
+        
         const currentPlayer = this.gameFlowController.turnManager.getCurrentPlayer();
+        
+        console.log('Current player in upgradeTerritory:', currentPlayer);
+        console.log('Is AI?', currentPlayer?.isAI);
         
         if (!currentPlayer) {
             this.showStatusMessage("No active player!");
+            this.isShowingConstructDialog = false;
             return;
         }
         
@@ -920,6 +984,7 @@ export default class GameScene extends Phaser.Scene {
         if (!territory.ownerId || territory.ownerId !== currentPlayer.id) {
             this.showStatusMessage("You don't own this territory!");
             console.log(`Player ${currentPlayer.id} doesn't own territory ${territory.id} (owned by ${territory.ownerId})`);
+            this.isShowingConstructDialog = false;
             return;
         }
         
@@ -932,6 +997,16 @@ export default class GameScene extends Phaser.Scene {
             
             // Show construct selection dialog
             console.log('About to show construct selection dialog');
+            console.log('Current player before dialog:', this.gameFlowController.turnManager.getCurrentPlayer());
+            console.log('Player is AI?', this.gameFlowController.turnManager.getCurrentPlayer()?.isAI);
+            
+            // Check if this is being called for an AI player by mistake
+            if (currentPlayer.isAI) {
+                console.error('ERROR: Trying to show dialog for AI player!');
+                this.isShowingConstructDialog = false;
+                return;
+            }
+            
             this.showConstructSelectionDialog(territory, (selectedType) => {
                 console.log('Construct selection callback called with:', selectedType);
                 const constructType = selectedType;
@@ -2374,16 +2449,31 @@ export default class GameScene extends Phaser.Scene {
     }
     
     onResourceProductionStarted(event) {
+        console.log('GameScene.onResourceProductionStarted called');
         console.log('Resource production started:', event);
         this.showStatusMessage('Resources are being produced...', 'info');
+        
+        // Debug: Check if any territories will produce
+        if (event.results) {
+            const count = event.results.individualProduction?.length || 0;
+            console.log(`Number of territories producing: ${count}`);
+            if (count === 0) {
+                console.warn('No territories are producing! Make sure territories have constructs.');
+                this.showStatusMessage('No territories have constructs to produce resources!', 'warning');
+            }
+        }
     }
     
     onTerritoryProduced(event) {
+        console.log('GameScene.onTerritoryProduced called:', event);
         const { territoryId, resource, amount, playerId } = event;
         
         // Get territory from grid
         const territory = this.gameFlowController.territoryGrid?.getTerritoryById(territoryId);
-        if (!territory) return;
+        if (!territory) {
+            console.error('Territory not found:', territoryId);
+            return;
+        }
         
         // Show production animation
         this.showResourceProduction(territory, resource, amount);
@@ -2413,10 +2503,12 @@ export default class GameScene extends Phaser.Scene {
     }
     
     showResourceProduction(territory, resource, amount) {
+        console.log(`showResourceProduction called: territory=${territory.id}, resource=${resource}, amount=${amount}`);
         if (amount <= 0) return;
         
         // Get territory position
         const pos = this.hexUtils.axialToPixel(territory.q, territory.r);
+        console.log(`Territory position:`, pos);
         
         // Create floating text showing +X resource
         const color = `#${this.resourceColors[resource].toString(16).padStart(6, '0')}`;

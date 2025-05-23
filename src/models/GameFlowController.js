@@ -70,6 +70,17 @@ export default class GameFlowController {
         this.cycleManager.on('phase.ended', this.onPhaseEnded.bind(this));
         this.cycleManager.on('game.ended', this.onGameEnded.bind(this));
         
+        // Resource production events - forward them
+        this.cycleManager.on('resource_production.started', (data) => this.broadcastEvent('resource_production.started', data));
+        this.cycleManager.on('territory.produced', (data) => this.broadcastEvent('territory.produced', data));
+        this.cycleManager.on('player.production_applied', (data) => this.broadcastEvent('player.production_applied', data));
+        this.cycleManager.on('resource_production.completed', (data) => this.broadcastEvent('resource_production.completed', data));
+        
+        // Resource decay events - forward them
+        this.cycleManager.on('resource_decay.processing', (data) => this.broadcastEvent('resource_decay.processing', data));
+        this.cycleManager.on('player.resources_decayed', (data) => this.broadcastEvent('player.resources_decayed', data));
+        this.cycleManager.on('resource_decay.completed', (data) => this.broadcastEvent('resource_decay.completed', data));
+        
         // Turn management events
         this.turnManager.on('turn.started', this.onTurnStarted.bind(this));
         this.turnManager.on('turn.ended', this.onTurnEnded.bind(this));

@@ -90,6 +90,7 @@ export default class GameCycleManager {
     advancePhase() {
         try {
             console.log(`GameCycleManager.advancePhase called - current phase: ${this.currentPhase}, index: ${this.phaseIndex}`);
+            console.trace('advancePhase called from:');
             this.endCurrentPhase();
             this.phaseIndex++;
             
@@ -131,6 +132,9 @@ export default class GameCycleManager {
                     this.initializeConstructOutfitting();
                     break;
                 case 'resource_production':
+                    console.log('Starting resource production phase execution...');
+                    // Make sure to clear any existing phase timer
+                    this.clearPhaseTimer();
                     this.executeResourceProduction();
                     break;
                 case 'auction_phase':
@@ -145,7 +149,12 @@ export default class GameCycleManager {
 
             // Set up auto-advance if configured
             if (phaseConfig.autoAdvance) {
-                this.schedulePhaseAdvance(phaseConfig.timeLimit);
+                // Temporarily disable auto-advance for resource production to see effects
+                if (this.currentPhase === 'resource_production') {
+                    console.log('Auto-advance disabled for resource production phase');
+                } else {
+                    this.schedulePhaseAdvance(phaseConfig.timeLimit);
+                }
             }
         } catch (error) {
             this.errorHandler.handleError(error, 'GameCycleManager.startCurrentPhase');
@@ -202,6 +211,7 @@ export default class GameCycleManager {
      */
     executeResourceProduction() {
         console.log('=== RESOURCE PRODUCTION PHASE ===');
+        console.log('executeResourceProduction called');
         
         try {
             // Initialize calculator if needed
@@ -211,16 +221,23 @@ export default class GameCycleManager {
             
             // Calculate all production
             const productionResults = this.resourceCalculator.calculateCycleProduction();
+            console.log('Production calculation results:', productionResults);
+            console.log('Individual productions:', productionResults?.individualProduction?.length || 0);
+            console.log('Player totals:', productionResults?.playerTotals?.length || 0);
             
             // Broadcast production started event
+            console.log('Broadcasting resource_production.started event');
             this.broadcastEvent('resource_production.started', {
                 cycle: this.currentCycle,
                 results: productionResults
             });
             
             // Apply production to players with visual delays
+            console.log('Scheduling production application for players...');
             productionResults.playerTotals.forEach((playerTotal, index) => {
+                console.log(`Scheduling player ${playerTotal.playerId} production in ${index * 500}ms`);
                 setTimeout(() => {
+                    console.log(`Applying production for player ${playerTotal.playerId}`);
                     this.applyProductionToPlayer(playerTotal);
                 }, index * 500);
             });
@@ -234,7 +251,9 @@ export default class GameCycleManager {
                 });
                 
                 // Auto-advance after showing summary
-                this.schedulePhaseAdvance(5); // Give 5 seconds to view summary
+                // DISABLED for testing - manually advance when ready
+                // this.schedulePhaseAdvance(5); // Give 5 seconds to view summary
+                console.log('Auto-advance after production disabled - manually advance when ready');
             }, totalDelay);
             
         } catch (error) {
@@ -275,7 +294,7 @@ export default class GameCycleManager {
      */
     applyProductionToPlayer(playerTotal) {
         try {
-            const player = this.gameFlow.game.getPlayerById(playerTotal.playerId);
+            const player = this.gameFlow.stateManager.getPlayer(playerTotal.playerId);
             if (!player) {
                 console.error(`Player ${playerTotal.playerId} not found`);
                 return;
@@ -285,7 +304,9 @@ export default class GameCycleManager {
             const storageResults = this.resourceStorage.addResources(player, playerTotal.resources);
             
             // Broadcast individual territory production events
+            console.log(`Broadcasting production events for ${playerTotal.territories.length} territories`);
             playerTotal.territories.forEach(territory => {
+                console.log(`Broadcasting territory.produced for ${territory.territoryId}: ${territory.amount} ${territory.resource}`);
                 this.broadcastEvent('territory.produced', {
                     playerId: player.id,
                     territoryId: territory.territoryId,

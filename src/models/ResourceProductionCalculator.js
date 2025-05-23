@@ -110,6 +110,12 @@ export default class ResourceProductionCalculator {
                           this.gameFlow?.game?.territories || 
                           [];
         
+        console.log(`ResourceProductionCalculator: Found ${territories.length} territories`);
+        const territoriesWithOwners = territories.filter(t => t.ownerId);
+        const territoriesWithConstructs = territories.filter(t => t.ownerId && t.construct);
+        console.log(`- Territories with owners: ${territoriesWithOwners.length}`);
+        console.log(`- Territories with constructs: ${territoriesWithConstructs.length}`);
+        
         // Calculate production for each territory
         territories.forEach(territory => {
             if (territory.ownerId && territory.construct) {
