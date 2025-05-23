@@ -69,6 +69,7 @@ export default class ResourceProductionCalculator {
         return {
             territoryId: territory.id,
             playerId: territory.ownerId,
+            constructType: construct.type,
             resource: resourceType,
             amount: Math.floor(production),
             modifiers: {
@@ -254,5 +255,20 @@ export default class ResourceProductionCalculator {
         }
         
         return production;
+    }
+    
+    /**
+     * Calculate production for a specific construct
+     * Used by ConstructManager
+     * @param {Construct} construct - The construct to calculate for
+     * @returns {number} Production amount
+     */
+    calculateConstructProduction(construct) {
+        if (!construct.territory) {
+            return 0;
+        }
+        
+        const production = this.calculateTerritoryProduction(construct.territory);
+        return production ? production.amount : 0;
     }
 }

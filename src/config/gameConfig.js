@@ -23,6 +23,50 @@ export const CONSTRUCT_TYPES = {
     AETHER_RESONATOR: 'aether_resonator'
 };
 
+// Detailed construct type definitions
+export const CONSTRUCT_DEFINITIONS = {
+    mana_conduit: {
+        name: 'Mana Conduit',
+        baseCost: { arcanum: 150, mana: 50 },
+        baseProduction: { min: 8, max: 15 },
+        resourceType: 'mana',
+        installTime: { min: 10, max: 25 },
+        bestTerrain: ['crystalline_cave'],
+        icon: '💎',
+        description: 'Channels magical energy from ley lines'
+    },
+    vitality_well: {
+        name: 'Vitality Well',
+        baseCost: { arcanum: 150, vitality: 50 },
+        baseProduction: { min: 6, max: 12 },
+        resourceType: 'vitality',
+        installTime: { min: 8, max: 20 },
+        bestTerrain: ['ancient_grove'],
+        icon: '🌿',
+        description: 'Draws life force from natural sources'
+    },
+    arcanum_extractor: {
+        name: 'Arcanum Extractor',
+        baseCost: { arcanum: 200, mana: 75 },
+        baseProduction: { min: 4, max: 10 },
+        resourceType: 'arcanum',
+        installTime: { min: 15, max: 30 },
+        bestTerrain: ['ruined_temple'],
+        icon: '⚗️',
+        description: 'Extracts crystallized magical essence'
+    },
+    aether_resonator: {
+        name: 'Aether Resonator',
+        baseCost: { arcanum: 300, mana: 100, vitality: 50 },
+        baseProduction: { min: 2, max: 8 },
+        resourceType: 'aether',
+        installTime: { min: 20, max: 40 },
+        bestTerrain: ['volcanic_field'],
+        icon: '✨',
+        description: 'Resonates with rare magical frequencies'
+    }
+};
+
 export const TERRITORY_COLORS = {
     [TERRITORY_TYPES.ANCIENT_GROVE]: 0x228822, // Green
     [TERRITORY_TYPES.CRYSTALLINE_CAVE]: 0x4444FF, // Blue

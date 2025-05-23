@@ -32,6 +32,11 @@ export default class Player {
         this.constructs = [];
         this.improvements = [];
         
+        // Inventory
+        this.inventory = {
+            constructs: []
+        };
+        
         // Player attributes
         this.specialization = config.specialization || null;
         this.actionTime = 60; // Base action time in seconds
@@ -133,6 +138,24 @@ export default class Player {
         }
         
         return true;
+    }
+    
+    /**
+     * Check if player can afford a cost (alias for hasEnoughResources)
+     * @param {Object} cost - Resource costs by type
+     * @returns {boolean} Whether the player can afford the cost
+     */
+    canAfford(cost) {
+        return this.hasEnoughResources(cost);
+    }
+    
+    /**
+     * Deduct resources from player (alias for removeResources)
+     * @param {Object} cost - Resource costs by type
+     * @returns {boolean} Whether the deduction was successful
+     */
+    deductResources(cost) {
+        return this.removeResources(cost);
     }
     
     /**

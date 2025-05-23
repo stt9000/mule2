@@ -24,7 +24,7 @@ export default class GameStateManager {
             
             // Game world
             territories: [],
-            constructs: [],
+            constructs: [], // Managed by ConstructManager
             
             // Economic state
             market: {

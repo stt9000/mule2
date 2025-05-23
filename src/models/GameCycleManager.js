@@ -342,7 +342,9 @@ export default class GameCycleManager {
                 aether: 0
             },
             playerSummaries: [],
-            topProducers: {}
+            topProducers: {},
+            // Add individual production data for the detailed table
+            individualProduction: productionResults.individualProduction || []
         };
         
         // Calculate totals and find top producers

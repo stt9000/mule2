@@ -4,6 +4,7 @@
  */
 import Territory from './Territory.js';
 import Construct from './Construct.js';
+import ConstructManager from './ConstructManager.js';
 import Resource from './Resource.js';
 import Player from './Player.js';
 import Market from './Market.js';
@@ -33,6 +34,7 @@ import GoldManager from './GoldManager.js';
 export {
     Territory,
     Construct,
+    ConstructManager,
     Resource,
     Player,
     Market,
@@ -55,6 +57,7 @@ export {
 export default {
     Territory,
     Construct,
+    ConstructManager,
     Resource,
     Player,
     Market,

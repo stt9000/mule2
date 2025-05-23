@@ -3,6 +3,7 @@ import { GameFlowController, Construct } from '../models/index.js';
 import { TERRITORY_COLORS, GAME_SETTINGS, PLAYER_COLORS } from '../config/gameConfig.js';
 import HexUtils from '../utils/HexUtils.js';
 import ProductionSummaryPanel from '../ui/panels/ProductionSummaryPanel.js';
+import ConstructSystemIntegration from '../integration/ConstructSystemIntegration.js';
 
 export default class GameScene extends Phaser.Scene {
     constructor() {
@@ -67,6 +68,15 @@ export default class GameScene extends Phaser.Scene {
         
         // Create UI panels
         this.productionSummaryPanel = new ProductionSummaryPanel(this);
+        
+        // Initialize Construct System
+        this.constructSystem = new ConstructSystemIntegration(this);
+        this.constructSystem.initialize();
+        
+        // Expose to test harness if available
+        if (window.testHarness) {
+            window.testHarness.setGameScene(this);
+        }
     }
     
     setupGameFlowListeners() {
@@ -347,6 +357,60 @@ export default class GameScene extends Phaser.Scene {
                 this.statusMessage.textContent = '';
             }
         }, 3000);
+    }
+    
+    showHomesteadMessage() {
+        // Create a special homestead announcement
+        const existingAnnouncement = document.getElementById('homestead-announcement');
+        if (existingAnnouncement) {
+            existingAnnouncement.remove();
+        }
+        
+        const announcement = document.createElement('div');
+        announcement.id = 'homestead-announcement';
+        announcement.style.cssText = `
+            position: absolute;
+            top: 100px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: linear-gradient(135deg, rgba(255, 215, 0, 0.95), rgba(255, 235, 0, 0.95));
+            color: #1a1a2d;
+            padding: 20px 40px;
+            border-radius: 10px;
+            font-size: 20px;
+            font-weight: bold;
+            text-align: center;
+            z-index: 1000;
+            box-shadow: 0 4px 20px rgba(255, 215, 0, 0.5);
+            border: 2px solid #FFD700;
+            max-width: 600px;
+        `;
+        
+        announcement.innerHTML = `
+            <div style="font-size: 24px; margin-bottom: 10px; color: #8B4513;">
+                🏰 Royal Decree from the Arcane Council 🏰
+            </div>
+            <div style="font-size: 18px; line-height: 1.5;">
+                The <strong>Mystic Empire of Aethermoor</strong> grants each settler<br>
+                ONE FREE HOMESTEAD PLOT<br>
+                to encourage development of the frontier lands!
+            </div>
+            <div style="font-size: 16px; margin-top: 10px; font-style: italic;">
+                Choose your territory wisely - your first claim costs nothing!
+            </div>
+        `;
+        
+        document.getElementById('game-container').appendChild(announcement);
+        
+        // Fade out after 6 seconds
+        setTimeout(() => {
+            announcement.style.transition = 'opacity 1s ease-out';
+            announcement.style.opacity = '0';
+            setTimeout(() => announcement.remove(), 1000);
+        }, 6000);
+        
+        // Also show regular status message
+        this.showStatusMessage('Territory Selection Phase - Choose your FREE homestead!');
     }
     
     showConstructSelectionDialog(territory, callback) {
@@ -1770,7 +1834,13 @@ export default class GameScene extends Phaser.Scene {
             this.phaseText.textContent = formattedPhase;
         }
         
-        this.showStatusMessage(`Phase: ${formattedPhase}`);
+        // Show phase-specific messages
+        if (phase === 'territory_selection') {
+            // Show homestead message for territory selection
+            this.showHomesteadMessage();
+        } else {
+            this.showStatusMessage(`Phase: ${formattedPhase}`);
+        }
         
         // Don't automatically select mode - let player choose
         // Clear any previous selection mode
@@ -2413,10 +2483,13 @@ export default class GameScene extends Phaser.Scene {
     initializeResourceVisualization() {
         // Define resource colors
         this.resourceColors = {
+            gold: 0xFFD700,      // Gold
             mana: 0x0080ff,      // Blue
-            vitality: 0x00ff00,  // Green
-            arcanum: 0xff8000,   // Orange
-            aether: 0xff00ff     // Purple
+            food: 0x00ff00,      // Green
+            smithium: 0xff8000,  // Orange
+            vitality: 0x00ff00,  // Green (legacy)
+            arcanum: 0xff8000,   // Orange (legacy)
+            aether: 0xff00ff     // Purple (legacy)
         };
         
         // Create particle emitters for each resource type
@@ -2626,28 +2699,229 @@ export default class GameScene extends Phaser.Scene {
     }
     
     showProductionSummary(summary) {
-        // Show the production summary panel
-        if (this.productionSummaryPanel) {
-            this.productionSummaryPanel.show(summary);
-        } else {
-            // Fallback to text message if panel not available
-            let summaryText = `=== Cycle ${summary.cycleNumber} Production ===\n\n`;
-            
-            // Add player summaries
-            summary.playerSummaries.forEach(player => {
-                const total = Object.values(player.totalResources).reduce((sum, val) => sum + val, 0);
-                if (total > 0) {
-                    summaryText += `${player.playerName}: `;
-                    summaryText += `M:${player.totalResources.mana} `;
-                    summaryText += `V:${player.totalResources.vitality} `;
-                    summaryText += `A:${player.totalResources.arcanum} `;
-                    summaryText += `Ae:${player.totalResources.aether}\n`;
+        console.log('Showing production summary:', summary);
+        
+        // Remove any existing summary
+        const existingSummary = document.getElementById('production-summary-modal');
+        if (existingSummary) {
+            document.body.removeChild(existingSummary);
+        }
+        
+        // Create modal overlay
+        const modal = document.createElement('div');
+        modal.id = 'production-summary-modal';
+        modal.style.cssText = `
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.8);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 10001;
+        `;
+        
+        // Create modal content
+        const content = document.createElement('div');
+        content.style.cssText = `
+            background-color: rgba(20, 20, 20, 0.95);
+            border: 3px solid #FFD700;
+            border-radius: 15px;
+            padding: 30px;
+            max-width: 90%;
+            max-height: 80%;
+            overflow-y: auto;
+            box-shadow: 0 0 20px rgba(255, 215, 0, 0.5);
+        `;
+        
+        // Title
+        const title = document.createElement('h2');
+        title.textContent = 'Resource Production Summary';
+        title.style.cssText = `
+            color: #FFD700;
+            text-align: center;
+            margin: 0 0 20px 0;
+            font-size: 28px;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+        `;
+        content.appendChild(title);
+        
+        // Create table
+        const table = document.createElement('table');
+        table.style.cssText = `
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 20px;
+            font-size: 16px;
+        `;
+        
+        // Table header
+        const thead = document.createElement('thead');
+        const headerRow = document.createElement('tr');
+        headerRow.style.cssText = `
+            background-color: rgba(255, 215, 0, 0.2);
+            border-bottom: 2px solid #FFD700;
+        `;
+        
+        const headers = ['Player', 'Gold', 'Mana', 'Food', 'Smithium', 'Total'];
+        headers.forEach(headerText => {
+            const th = document.createElement('th');
+            th.textContent = headerText;
+            th.style.cssText = `
+                padding: 12px;
+                text-align: left;
+                color: #FFD700;
+                font-weight: bold;
+            `;
+            headerRow.appendChild(th);
+        });
+        thead.appendChild(headerRow);
+        table.appendChild(thead);
+        
+        // Table body
+        const tbody = document.createElement('tbody');
+        
+        // Process production data by player
+        const playerProductions = {};
+        
+        // First, initialize all players with zero production
+        const allPlayers = this.gameFlowController.stateManager.gameState.players;
+        allPlayers.forEach(player => {
+            playerProductions[player.id] = {
+                name: player.name,
+                territories: [],
+                totals: { gold: 0, mana: 0, food: 0, smithium: 0 }
+            };
+        });
+        
+        // Extract production data from summary
+        if (summary.summary) {
+            // New format with summary object
+            Object.entries(summary.summary).forEach(([playerId, playerData]) => {
+                if (playerProductions[playerId]) {
+                    // Add production data
+                    if (playerData.production) {
+                        Object.entries(playerData.production).forEach(([resource, amount]) => {
+                            playerProductions[playerId].totals[resource] = (playerProductions[playerId].totals[resource] || 0) + amount;
+                        });
+                    }
                 }
             });
-            
-            // Show in status message
-            this.showStatusMessage(summaryText.trim(), 'info');
+        } else if (summary.individualProduction) {
+            // Old format with individualProduction array
+            summary.individualProduction.forEach(prod => {
+                if (playerProductions[prod.playerId]) {
+                    // Get construct type from territory if not in production data
+                    let constructType = prod.constructType;
+                    if (!constructType) {
+                        const territory = this.gameFlowController.stateManager.getTerritory(prod.territoryId);
+                        if (territory && territory.construct) {
+                            constructType = territory.construct.type;
+                        }
+                    }
+                    
+                    playerProductions[prod.playerId].territories.push({
+                        territoryId: prod.territoryId,
+                        constructType: constructType || 'unknown',
+                        resource: prod.resource,
+                        amount: prod.amount
+                    });
+                    
+                    playerProductions[prod.playerId].totals[prod.resource] += prod.amount;
+                }
+            });
         }
+        
+        // Add rows for each player
+        Object.values(playerProductions).forEach(playerData => {
+            const row = document.createElement('tr');
+            row.style.cssText = `
+                background-color: rgba(255, 255, 255, 0.05);
+                border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            `;
+            
+            // Player name cell
+            const playerCell = document.createElement('td');
+            playerCell.textContent = playerData.name;
+            playerCell.style.cssText = `
+                padding: 15px;
+                color: #FFFFFF;
+                font-weight: bold;
+                font-size: 18px;
+            `;
+            row.appendChild(playerCell);
+            
+            // Resource totals
+            const resources = ['gold', 'mana', 'food', 'smithium'];
+            resources.forEach(resource => {
+                const cell = document.createElement('td');
+                const amount = playerData.totals[resource] || 0;
+                cell.textContent = amount > 0 ? amount : '-';
+                cell.style.cssText = `
+                    padding: 15px;
+                    text-align: center;
+                    color: ${amount > 0 ? `#${this.resourceColors[resource].toString(16).padStart(6, '0')}` : '#666666'};
+                    font-weight: bold;
+                    font-size: 20px;
+                `;
+                row.appendChild(cell);
+            });
+            
+            // Total cell
+            const totalCell = document.createElement('td');
+            const total = Object.values(playerData.totals).reduce((sum, val) => sum + (val || 0), 0);
+            totalCell.textContent = (isNaN(total) || total === 0) ? '-' : total;
+            totalCell.style.cssText = `
+                padding: 15px;
+                text-align: center;
+                color: ${(isNaN(total) || total === 0) ? '#666666' : '#FFD700'};
+                font-weight: bold;
+                font-size: 22px;
+                text-shadow: ${(isNaN(total) || total === 0) ? 'none' : '2px 2px 4px rgba(0, 0, 0, 0.5)'};
+            `;
+            row.appendChild(totalCell);
+            
+            tbody.appendChild(row);
+        });
+        
+        table.appendChild(tbody);
+        content.appendChild(table);
+        
+        // Continue button
+        const continueButton = document.createElement('button');
+        continueButton.textContent = 'Continue';
+        continueButton.style.cssText = `
+            display: block;
+            margin: 0 auto;
+            padding: 10px 30px;
+            background-color: #4a5aa8;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            font-size: 18px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        `;
+        
+        continueButton.addEventListener('mouseover', () => {
+            continueButton.style.backgroundColor = '#5c6ec9';
+        });
+        
+        continueButton.addEventListener('mouseout', () => {
+            continueButton.style.backgroundColor = '#4a5aa8';
+        });
+        
+        continueButton.addEventListener('click', () => {
+            document.body.removeChild(modal);
+            // Let the game continue
+            this.showStatusMessage('Production phase complete!', 'info');
+        });
+        
+        content.appendChild(continueButton);
+        modal.appendChild(content);
+        document.body.appendChild(modal);
     }
     
     // Resource Decay Event Handlers

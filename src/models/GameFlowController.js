@@ -7,6 +7,8 @@ import TerritoryGrid from './TerritoryGrid.js';
 import TerritoryAcquisition from './TerritoryAcquisition.js';
 import TerritoryImprovement from './TerritoryImprovement.js';
 import GoldManager from './GoldManager.js';
+import ConstructManager from './ConstructManager.js';
+import ResourceProductionCalculator from './ResourceProductionCalculator.js';
 import ErrorHandler from '../utils/ErrorHandler.js';
 
 /**
@@ -40,6 +42,10 @@ export default class GameFlowController {
         
         // Initialize economy management
         this.goldManager = new GoldManager(this);
+        
+        // Initialize construct system
+        this.constructManager = new ConstructManager(this);
+        this.resourceProductionCalculator = new ResourceProductionCalculator(this);
         
         // Game state
         this.isInitialized = false;
@@ -139,6 +145,9 @@ export default class GameFlowController {
             this.stateManager.updateGameState({
                 territories: this.territoryGrid.getSerializableState().territories
             });
+            
+            // Initialize construct system with production calculator
+            this.constructManager.initialize(this.resourceProductionCalculator);
             
             // Save initial state
             this.stateManager.saveStateSnapshot('Game Initialized');
@@ -663,6 +672,66 @@ export default class GameFlowController {
             // Statistics
             statistics: this.stateManager.getStatistics()
         };
+    }
+
+    /**
+     * Save game state
+     */
+    async saveGame(slotName = 'autosave') {
+        try {
+            // Get current game state
+            const gameState = this.stateManager.gameState;
+            
+            // Add construct data to game state
+            if (this.constructManager) {
+                gameState.constructs = this.constructManager.serialize();
+            }
+            
+            // Save the game
+            const result = await this.persistence.saveGame(gameState, slotName);
+            
+            if (result.success) {
+                this.broadcastEvent('game.saved', { slotName });
+            }
+            
+            return result;
+        } catch (error) {
+            this.errorHandler.handleError(error, 'GameFlowController.saveGame');
+            return { success: false, error: error.message };
+        }
+    }
+
+    /**
+     * Load game state
+     */
+    async loadGame(slotName) {
+        try {
+            const result = await this.persistence.loadGame(slotName);
+            
+            if (result.success) {
+                const loadedState = result.saveData.gameState;
+                
+                // Restore game state
+                this.stateManager.gameState = loadedState;
+                
+                // Restore constructs if data exists
+                if (loadedState.constructs && this.constructManager) {
+                    this.constructManager.deserialize(loadedState.constructs, this);
+                }
+                
+                // Re-initialize systems with loaded state
+                this.turnManager.players = loadedState.players;
+                this.cycleManager.currentCycle = loadedState.currentCycle;
+                this.cycleManager.currentPhase = loadedState.currentPhase;
+                
+                this.broadcastEvent('game.loaded', { slotName });
+            }
+            
+            return result;
+        } catch (error) {
+            this.errorHandler.handleError(error, 'GameFlowController.loadGame');
+            return { success: false, error: error.message };
+        }
     }
 
     /**

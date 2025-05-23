@@ -12,12 +12,14 @@ export default class Construct {
      * @param {Object} config.owner - Player who owns this construct
      */
     constructor(config) {
-        this.id = config.id || `construct_${Date.now()}`;
+        this.id = config.id || `construct_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
         this.type = config.type;
         this.level = config.level || 1;
         this.owner = config.owner || null;
         this.territory = null; // Will be set when placed
         this.efficiency = 1.0; // Can be reduced by events or damage
+        this.status = config.status || 'inventory'; // inventory, transporting, installing, active, damaged
+        this.productionHistory = [];
         
         // Visual components
         this.sprite = null;
