@@ -138,15 +138,51 @@ export default class ConstructManager {
      * @returns {Object} Installation object
      */
     initiateInstallation(constructId, territoryId, playerId) {
-        const construct = this.constructs.get(constructId);
-        const territory = this.game.territoryGrid ? 
-            this.game.territoryGrid.getTerritory(territoryId) :
-            this.game.gameFlowController?.territoryGrid?.getTerritory(territoryId);
+        console.log('initiateInstallation called:', { constructId, territoryId, playerId });
+        
+        // Try to find construct in multiple places
+        let construct = this.constructs.get(constructId);
+        
+        // If not found in manager, check player inventory
+        if (!construct) {
+            const player = this.getPlayer(playerId);
+            if (player && player.inventory && player.inventory.constructs) {
+                construct = player.inventory.constructs.find(c => c.id === constructId);
+                if (construct) {
+                    // Add to manager if found in inventory
+                    this.constructs.set(construct.id, construct);
+                }
+            }
+        }
+        
+        // Try multiple ways to get the territory
+        let territory = null;
+        if (this.game.territoryGrid) {
+            territory = this.game.territoryGrid.getTerritoryById ? 
+                this.game.territoryGrid.getTerritoryById(territoryId) :
+                this.game.territoryGrid.getTerritory(territoryId);
+        }
+        if (!territory && this.game.gameFlowController?.territoryGrid) {
+            territory = this.game.gameFlowController.territoryGrid.getTerritoryById ? 
+                this.game.gameFlowController.territoryGrid.getTerritoryById(territoryId) :
+                this.game.gameFlowController.territoryGrid.getTerritory(territoryId);
+        }
+        // Try direct access if ID is coordinates
+        if (!territory && territoryId.includes(',')) {
+            const [q, r] = territoryId.split(',').map(Number);
+            if (this.game.territoryGrid) {
+                territory = this.game.territoryGrid.grid.find(t => t.q === q && t.r === r);
+            } else if (this.game.gameFlowController?.territoryGrid) {
+                territory = this.game.gameFlowController.territoryGrid.grid.find(t => t.q === q && t.r === r);
+            }
+        }
         const player = this.getPlayer(playerId);
 
+        console.log('Found construct:', !!construct, 'Found territory:', !!territory, 'Found player:', !!player);
+        
         // Validations
         if (!construct) {
-            throw new Error('Construct not found');
+            throw new Error('Construct not found in manager or player inventory');
         }
 
         if (!territory) {

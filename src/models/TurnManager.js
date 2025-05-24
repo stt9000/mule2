@@ -510,21 +510,16 @@ export default class TurnManager {
     startTurnTimer(player) {
         this.clearTurnTimer();
         
-        // Don't start timer for human players during interactive phases
-        if (!player.isAI) {
-            const phaseConfig = this.phaseActionConfigs[this.currentPhase];
-            if (phaseConfig && phaseConfig.allowedActions && phaseConfig.allowedActions.length > 0) {
-                console.log('Skipping timer for human player in interactive phase');
-                return;
-            }
-        }
+        // The visual timer is now handled by GameScene
+        // This method only sets up the timeout for forcing turn end
         
         const phaseConfig = this.phaseActionConfigs[this.currentPhase];
         const timeLimit = this.turnTimeLimit || phaseConfig.timeLimit;
         
         if (timeLimit && timeLimit > 0) {
-            console.log(`Starting turn timer for ${player.id}: ${timeLimit} seconds`);
+            console.log(`TurnManager: Setting turn timeout for ${player.id}: ${timeLimit} seconds`);
             this.turnTimer = setTimeout(() => {
+                console.log(`TurnManager: Time expired for ${player.id}, forcing turn end`);
                 this.forceEndPlayerTurn(player);
             }, timeLimit * 1000);
         }

@@ -19,12 +19,12 @@ export default class Player {
         this.color = config.color || 0xFFFFFF;
         this.gold = config.gold || 1000;
         
-        // Resources
+        // Resources - Start with some basic resources
         this.resources = config.resources || {
-            mana: 0,
-            vitality: 0,
-            arcanum: 0,
-            aether: 0
+            mana: 100,
+            vitality: 100,
+            arcanum: 200,
+            aether: 50
         };
         
         // Owned properties

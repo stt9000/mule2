@@ -270,8 +270,21 @@ export default class ConstructShopPanel extends Phaser.GameObjects.Container {
         
         const cost = CONSTRUCT_DEFINITIONS[constructType].baseCost;
         
-        // Check if player can afford
-        if (!player.canAfford(cost)) {
+        // Check if player can afford (handle both Player instances and plain objects)
+        let canAfford = true;
+        if (player.canAfford) {
+            canAfford = player.canAfford(cost);
+        } else {
+            // Manual check for plain objects
+            for (const [resource, amount] of Object.entries(cost)) {
+                if (!player.resources || (player.resources[resource] || 0) < amount) {
+                    canAfford = false;
+                    break;
+                }
+            }
+        }
+        
+        if (!canAfford) {
             this.showInsufficientResourcesWarning();
             return;
         }

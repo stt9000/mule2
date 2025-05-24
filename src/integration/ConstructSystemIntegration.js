@@ -3,10 +3,12 @@
  * Integrates all construct system components into the game
  */
 import ConstructShopPanel from '../ui/panels/ConstructShopPanel.js';
+import ConstructSelectionPanel from '../ui/panels/ConstructSelectionPanel.js';
 import ConstructManagementPanel from '../ui/panels/ConstructManagementPanel.js';
 import ProductionMonitorDOM from '../ui/panels/ProductionMonitorDOM.js';
 import ConstructPlacementMode from '../ui/ConstructPlacementMode.js';
 import InstallationAnimator from '../ui/InstallationAnimator.js';
+import { CONSTRUCT_DEFINITIONS } from '../config/gameConfig.js';
 
 export default class ConstructSystemIntegration {
     constructor(scene) {
@@ -52,6 +54,13 @@ export default class ConstructSystemIntegration {
     createPanels() {
         // Construct Shop Panel
         this.panels.shop = new ConstructShopPanel(
+            this.scene,
+            this.scene.cameras.main.width / 2,
+            this.scene.cameras.main.height / 2
+        );
+
+        // Construct Selection Panel (for placing from inventory)
+        this.panels.selection = new ConstructSelectionPanel(
             this.scene,
             this.scene.cameras.main.width / 2,
             this.scene.cameras.main.height / 2
@@ -184,6 +193,11 @@ export default class ConstructSystemIntegration {
             if (!shiftKey.isDown) {
                 console.log('Toggling production monitor');
                 this.panels.monitor.toggle();
+                
+                // If showing, update with current production data
+                if (this.panels.monitor.isVisible) {
+                    this.updateCurrentProduction();
+                }
             }
         });
     }
@@ -193,10 +207,17 @@ export default class ConstructSystemIntegration {
     onConstructPurchased(data) {
         console.log('Construct purchased:', data.construct.type);
         
-        // Automatically start placement mode
-        if (data.construct && this.systems.placementMode) {
-            this.systems.placementMode.activatePlacementMode(data.construct);
-            this.panels.shop.hide(); // Hide shop during placement
+        // Check if we have a pre-selected territory (from territory click -> shop flow)
+        if (this.scene.selectedTerritoryForConstruct) {
+            console.log('Pre-selected territory found, placing construct immediately');
+            // The GameScene will handle the placement
+            this.panels.shop.hide();
+        } else {
+            // Normal flow: activate placement mode for selecting a territory
+            if (data.construct && this.systems.placementMode) {
+                this.systems.placementMode.activatePlacementMode(data.construct);
+                this.panels.shop.hide(); // Hide shop during placement
+            }
         }
     }
 
@@ -228,6 +249,13 @@ export default class ConstructSystemIntegration {
         // Update management panel if open
         if (this.panels.management.isVisible) {
             this.panels.management.updateConstructList();
+        }
+        
+        // Update production monitor to show new estimated production
+        if (this.panels.monitor.isVisible) {
+            setTimeout(() => {
+                this.updateCurrentProduction();
+            }, 500); // Small delay to ensure construct is fully placed
         }
     }
 
@@ -286,22 +314,38 @@ export default class ConstructSystemIntegration {
         }
     }
 
-    onProductionStarted() {
-        console.log('Resource production started');
+    onProductionStarted(data) {
+        console.log('Resource production started', data);
         
-        // Ensure production monitor is visible
-        if (!this.panels.monitor.isVisible) {
-            this.panels.monitor.show();
-        }
+        // Always show production monitor during production
+        this.panels.monitor.show();
+        
+        // Initialize with zeros if no data yet
+        const initData = {
+            summary: {
+                individualProduction: [],
+                playerProduction: []
+            }
+        };
+        
+        this.updateProductionMonitor(data || initData);
     }
 
     onProductionCompleted(data) {
-        console.log('Resource production completed');
+        console.log('Resource production completed', data);
         
-        // Update production monitor with final data
-        if (data && this.panels.monitor.isVisible) {
+        // Always update production monitor with final data
+        if (data) {
             this.updateProductionMonitor(data);
         }
+        
+        // Keep monitor visible for a few seconds after production
+        setTimeout(() => {
+            if (this.panels.monitor.isVisible) {
+                // Optionally hide after viewing
+                // this.panels.monitor.hide();
+            }
+        }, 5000);
     }
 
     /**
@@ -321,6 +365,8 @@ export default class ConstructSystemIntegration {
      * Update production monitor with game data
      */
     updateProductionMonitor(productionData) {
+        console.log('Updating production monitor with data:', productionData);
+        
         // Format data for monitor
         const monitorData = {
             currentCycle: this.scene.gameFlowController?.cycleManager?.currentCycle || 1,
@@ -332,21 +378,43 @@ export default class ConstructSystemIntegration {
             alerts: []
         };
 
-        // Get production totals by resource
-        if (productionData.playerTotals) {
-            productionData.playerTotals.forEach(playerData => {
-                if (playerData.playerId === this.getCurrentPlayerId()) {
-                    monitorData.production = playerData.resources;
+        // Get current player ID
+        const currentPlayerId = this.getCurrentPlayerId();
+        
+        // Initialize production totals
+        const resourceTypes = ['mana', 'vitality', 'arcanum', 'aether'];
+        resourceTypes.forEach(resource => {
+            monitorData.production[resource] = 0;
+        });
+        
+        // Calculate production from individual territories
+        if (productionData.summary && productionData.summary.individualProduction) {
+            productionData.summary.individualProduction.forEach(prod => {
+                if (prod.playerId === currentPlayerId) {
+                    monitorData.production[prod.resource] = (monitorData.production[prod.resource] || 0) + prod.amount;
                 }
             });
         }
+        
+        // Alternative: check playerProduction if available
+        if (productionData.summary && productionData.summary.playerProduction) {
+            const playerProd = productionData.summary.playerProduction.find(p => p.playerId === currentPlayerId);
+            if (playerProd && playerProd.resources) {
+                Object.keys(playerProd.resources).forEach(resource => {
+                    if (resourceTypes.includes(resource)) {
+                        monitorData.production[resource] = playerProd.resources[resource];
+                    }
+                });
+            }
+        }
 
-        // Set max production (could be calculated from all constructs)
+        // Set max production based on number of constructs
+        const playerConstructCount = this.getPlayerConstructCount();
         monitorData.maxProduction = {
-            mana: 100,
-            vitality: 80,
-            arcanum: 60,
-            aether: 30
+            mana: playerConstructCount * 20,
+            vitality: playerConstructCount * 20,
+            arcanum: playerConstructCount * 20,
+            aether: playerConstructCount * 10
         };
 
         // Add territory breakdown
@@ -388,7 +456,108 @@ export default class ConstructSystemIntegration {
                this.scene.gameFlowController?.gameStateManager?.getCurrentPlayer()?.id ||
                'player1';
     }
+    
+    /**
+     * Get the number of constructs owned by current player
+     */
+    getPlayerConstructCount() {
+        const playerId = this.getCurrentPlayerId();
+        if (!playerId) return 0;
+        
+        let count = 0;
+        const territories = this.scene.gameFlowController?.territoryGrid?.territories || [];
+        territories.forEach(territory => {
+            if (territory.ownerId === playerId && territory.construct) {
+                count++;
+            }
+        });
+        
+        return count;
+    }
+    
+    /**
+     * Update production monitor with current estimated production
+     */
+    updateCurrentProduction() {
+        console.log('Updating current production estimates');
+        
+        const currentPlayerId = this.getCurrentPlayerId();
+        const territories = this.scene.gameFlowController?.territoryGrid?.territories || [];
+        const calculator = this.scene.gameFlowController?.resourceProductionCalculator;
+        
+        // Calculate current production
+        const production = {
+            mana: 0,
+            vitality: 0,
+            arcanum: 0,
+            aether: 0
+        };
+        
+        territories.forEach(territory => {
+            if (territory.ownerId === currentPlayerId && territory.construct && territory.construct.status === 'active') {
+                // Use the production calculator if available
+                if (calculator) {
+                    const amount = calculator.calculateProduction(territory);
+                    const resource = calculator.getResourceTypeFromConstruct(territory.construct.type);
+                    if (resource && amount > 0) {
+                        production[resource] = (production[resource] || 0) + amount;
+                    }
+                } else {
+                    // Fallback: estimate based on construct type
+                    const constructDef = CONSTRUCT_DEFINITIONS[territory.construct.type];
+                    if (constructDef) {
+                        const resource = constructDef.resourceType;
+                        const baseAmount = (constructDef.baseProduction.min + constructDef.baseProduction.max) / 2;
+                        const efficiency = territory.construct.efficiency || 1;
+                        production[resource] = (production[resource] || 0) + Math.floor(baseAmount * efficiency);
+                    }
+                }
+            }
+        });
+        
+        // Create production data in expected format
+        const productionData = {
+            summary: {
+                playerProduction: [{
+                    playerId: currentPlayerId,
+                    resources: production
+                }]
+            }
+        };
+        
+        this.updateProductionMonitor(productionData);
+    }
 
+    // Public API Methods
+    
+    /**
+     * Open the construct shop panel
+     */
+    openShop() {
+        this.panels.shop.show();
+    }
+    
+    /**
+     * Open the construct selection panel (for placing from inventory)
+     */
+    openSelection(player, callback) {
+        this.panels.selection.show(player, callback);
+    }
+    
+    /**
+     * Open the construct management panel
+     */
+    openManagement() {
+        this.panels.management.show();
+    }
+    
+    /**
+     * Toggle the production monitor
+     */
+    toggleProductionMonitor() {
+        this.panels.monitor.toggle();
+    }
+    
     /**
      * Clean up the construct system
      */

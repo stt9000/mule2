@@ -99,10 +99,10 @@ export default class GameStateManager {
                 territories: [],
                 constructs: [],
                 resources: {
-                    [RESOURCE_TYPES.MANA]: 0,
-                    [RESOURCE_TYPES.VITALITY]: 0,
-                    [RESOURCE_TYPES.ARCANUM]: 0,
-                    [RESOURCE_TYPES.AETHER]: 0
+                    [RESOURCE_TYPES.MANA]: 100,
+                    [RESOURCE_TYPES.VITALITY]: 100,
+                    [RESOURCE_TYPES.ARCANUM]: 200,
+                    [RESOURCE_TYPES.AETHER]: 50
                 },
                 gold: player.gold || settings.startingGold || GAME_SETTINGS.STARTING_GOLD,
                 score: 0,

@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { GameFlowController, Construct } from '../models/index.js';
-import { TERRITORY_COLORS, GAME_SETTINGS, PLAYER_COLORS } from '../config/gameConfig.js';
+import { TERRITORY_COLORS, GAME_SETTINGS, PLAYER_COLORS, CONSTRUCT_DEFINITIONS } from '../config/gameConfig.js';
 import HexUtils from '../utils/HexUtils.js';
 import ProductionSummaryPanel from '../ui/panels/ProductionSummaryPanel.js';
 import ConstructSystemIntegration from '../integration/ConstructSystemIntegration.js';
@@ -63,6 +63,9 @@ export default class GameScene extends Phaser.Scene {
         // Configure camera to show the entire map
         this.setupCamera();
         
+        // Update player display to show initial resources
+        this.updatePlayerDisplay();
+        
         // Initialize resource visualization
         this.initializeResourceVisualization();
         
@@ -72,6 +75,13 @@ export default class GameScene extends Phaser.Scene {
         // Initialize Construct System
         this.constructSystem = new ConstructSystemIntegration(this);
         this.constructSystem.initialize();
+        
+        // Listen for construct purchases to update UI
+        this.events.on('construct-purchased', (data) => {
+            console.log('Construct purchased, updating player display');
+            // Update the main UI to reflect new resource values
+            this.updatePlayerDisplay();
+        });
         
         // Expose to test harness if available
         if (window.testHarness) {
@@ -415,7 +425,49 @@ export default class GameScene extends Phaser.Scene {
     
     showConstructSelectionDialog(territory, callback) {
         console.log('showConstructSelectionDialog called for territory:', territory.id);
-        // Remove any existing dialog first
+        
+        // Use the new construct selection panel if available
+        if (this.constructSystem && this.constructSystem.openSelection) {
+            const currentPlayer = this.gameFlowController.turnManager.getCurrentPlayer();
+            
+            // Store the selected territory for later use
+            this.selectedTerritoryForConstruct = territory;
+            
+            // Check if player has constructs in inventory
+            if (currentPlayer.inventory && currentPlayer.inventory.constructs && currentPlayer.inventory.constructs.length > 0) {
+                console.log('Player has constructs in inventory, showing selection panel');
+                // Player has constructs in inventory, show selection panel
+                this.constructSystem.openSelection(currentPlayer, (construct) => {
+                    console.log('Construct selected from inventory:', construct.type);
+                    // Place the selected construct on the territory
+                    this.placeConstructFromInventory(territory, construct);
+                });
+            } else {
+                console.log('No constructs in inventory, opening shop');
+                // No constructs in inventory, show shop to buy new ones
+                this.constructSystem.openShop();
+                
+                // After purchase, immediately place on the pre-selected territory
+                const purchaseHandler = (data) => {
+                    if (data.construct && this.selectedTerritoryForConstruct) {
+                        console.log('Construct purchased, placing on pre-selected territory:', this.selectedTerritoryForConstruct.id);
+                        
+                        // Use the new inventory placement flow to place the construct
+                        this.placeConstructFromInventory(this.selectedTerritoryForConstruct, data.construct);
+                        
+                        // Clear the selected territory
+                        this.selectedTerritoryForConstruct = null;
+                        
+                        // Show success message
+                        this.showStatusMessage(`${data.construct.type} is being installed on territory!`, 'success');
+                    }
+                };
+                this.events.once('construct-purchased', purchaseHandler);
+            }
+            return;
+        }
+        
+        // Fallback to old dialog (kept for backwards compatibility)
         const existingDialog = document.getElementById('construct-dialog');
         if (existingDialog) {
             console.log('Removing existing dialog');
@@ -442,19 +494,38 @@ export default class GameScene extends Phaser.Scene {
         
         // Title
         const title = document.createElement('h3');
-        title.textContent = 'Select Construct Type';
+        title.textContent = 'Magical Constructs';
         title.style.color = '#FFD700';
-        title.style.marginBottom = '20px';
+        title.style.marginBottom = '10px';
         title.style.textAlign = 'center';
         dialogContainer.appendChild(title);
         
-        // Construct options
-        const constructTypes = [
-            { type: 'mana_conduit', name: 'Mana Conduit', cost: 200, description: 'Produces mana energy' },
-            { type: 'vitality_well', name: 'Vitality Well', cost: 200, description: 'Produces life essence' },
-            { type: 'arcanum_extractor', name: 'Arcanum Extractor', cost: 200, description: 'Extracts arcane materials' },
-            { type: 'aether_resonator', name: 'Aether Resonator', cost: 200, description: 'Channels rare aether' }
-        ];
+        // Subtitle
+        const subtitle = document.createElement('p');
+        subtitle.textContent = 'Note: This is the old interface. Press C to open the new Construct Shop.';
+        subtitle.style.color = '#aaa';
+        subtitle.style.marginBottom = '20px';
+        subtitle.style.textAlign = 'center';
+        subtitle.style.fontSize = '14px';
+        dialogContainer.appendChild(subtitle);
+        
+        // Build construct types from imported definitions
+        const constructTypes = [];
+        Object.entries(CONSTRUCT_DEFINITIONS).forEach(([type, def]) => {
+            const costParts = [];
+            Object.entries(def.baseCost).forEach(([resource, amount]) => {
+                costParts.push(`${amount} ${resource}`);
+            });
+            
+            constructTypes.push({
+                type: type,
+                name: def.name,
+                icon: def.icon,
+                cost: costParts.join(', '),
+                description: def.description,
+                resourceType: def.resourceType
+            });
+        });
         
         console.log('Creating construct buttons...');
         constructTypes.forEach(construct => {
@@ -472,8 +543,15 @@ export default class GameScene extends Phaser.Scene {
             button.style.textAlign = 'left';
             
             button.innerHTML = `
-                <strong>${construct.name}</strong> - ${construct.cost} gold<br>
-                <small style="color: #aaa">${construct.description}</small>
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <span style="font-size: 24px;">${construct.icon || ''}</span>
+                    <div>
+                        <strong>${construct.name}</strong><br>
+                        <small style="color: #88ccff">Cost: ${construct.cost}</small><br>
+                        <small style="color: #aaa">${construct.description}</small><br>
+                        <small style="color: #ffcc66">Produces: ${construct.resourceType}</small>
+                    </div>
+                </div>
             `;
             
             button.onmouseover = () => {
@@ -859,6 +937,35 @@ export default class GameScene extends Phaser.Scene {
         }
     }
     
+    placeConstructFromInventory(territory, construct) {
+        console.log('Placing construct from inventory:', construct.type, 'on territory:', territory.id);
+        
+        // Use the ConstructManager to initiate installation
+        if (this.gameFlowController.constructManager) {
+            try {
+                const installation = this.gameFlowController.constructManager.initiateInstallation(
+                    construct.id,
+                    territory.id,
+                    construct.owner.id
+                );
+                
+                // Start the installation animation
+                if (this.constructSystem && this.constructSystem.systems.installationAnimator) {
+                    this.constructSystem.systems.installationAnimator.playInstallation(installation);
+                    
+                    // Listen for completion event
+                    this.events.once('installation-completed', (data) => {
+                        console.log('Installation completed:', data.result);
+                        this.updateTerritoryDisplay();
+                    });
+                }
+            } catch (error) {
+                console.error('Failed to place construct:', error);
+                this.showStatusMessage(error.message, 'error');
+            }
+        }
+    }
+    
     calculateProduction(territory) {
         if (!territory.owner || !territory.construct) return 0;
         
@@ -1101,65 +1208,157 @@ export default class GameScene extends Phaser.Scene {
                     id: `construct_${territory.id}_${Date.now()}`,
                     type: constructType,
                     level: 1,
-                    owner: updatedPlayer
+                    owner: updatedPlayer,
+                    status: 'inventory' // Start in inventory for proper installation flow
                 });
-                
-                // Store the construct on territory
-                territory.construct = newConstruct;
                 
                 console.log(`Created new construct of type ${constructType} at level 1`);
                 
-                // Clean up any existing visuals
-                if (territory.constructGraphic) {
-                    territory.constructGraphic.destroy();
+                // Force use the installation animation if available
+                if (this.constructSystem && this.constructSystem.systems && this.constructSystem.systems.installationAnimator) {
+                    console.log('Using installation animation flow');
+                    
+                    // Create a simplified installation object that will work
+                    const installation = {
+                        construct: newConstruct,
+                        territory: territory,
+                        startTime: Date.now(),
+                        duration: 20, // 20 seconds
+                        playerId: updatedPlayer.id
+                    };
+                    
+                    // Play the animation immediately
+                    this.constructSystem.systems.installationAnimator.playInstallation(installation);
+                    
+                    // Listen for completion event
+                    this.events.once('installation-completed', (data) => {
+                        console.log('Installation completed:', data.result);
+                        
+                        // Apply the result to the territory
+                        if (data.result.success) {
+                            territory.construct = newConstruct;
+                            newConstruct.status = 'active';
+                            newConstruct.efficiency = data.result.efficiency || 1;
+                        } else {
+                            // Installation failed - refund gold
+                            updatedPlayer.gold += buildCost;
+                            this.showStatusMessage('Installation failed! Gold refunded.', 'error');
+                        }
+                        
+                        this.updateTerritoryDisplay();
+                        this.updatePlayerDisplay();
+                    });
+                    
+                    // Also handle cancellation
+                    this.events.once('installation-cancelled', (data) => {
+                        console.log('Installation cancelled');
+                        // Refund gold
+                        updatedPlayer.gold += buildCost;
+                        this.updatePlayerDisplay();
+                        this.showStatusMessage('Installation cancelled. Gold refunded.', 'warning');
+                    });
+                    
+                } else if (this.gameFlowController.constructManager) {
+                    try {
+                        // Add to player's inventory temporarily
+                        if (!updatedPlayer.inventory) {
+                            updatedPlayer.inventory = { constructs: [] };
+                        }
+                        updatedPlayer.inventory.constructs.push(newConstruct);
+                        
+                        // Initiate installation
+                        const installation = this.gameFlowController.constructManager.initiateInstallation(
+                            newConstruct.id,
+                            territory.id,
+                            updatedPlayer.id
+                        );
+                        
+                        // Make sure installation has all needed data
+                        if (!installation.territory.q && territory.q !== undefined) {
+                            installation.territory = territory;
+                        }
+                        
+                        // Start the installation animation
+                        console.log('Checking for constructSystem:', !!this.constructSystem);
+                        console.log('Checking for installationAnimator:', !!this.constructSystem?.systems?.installationAnimator);
+                        console.log('Installation object:', installation);
+                        
+                        if (this.constructSystem && this.constructSystem.systems.installationAnimator) {
+                            console.log('Starting installation animation!');
+                            this.constructSystem.systems.installationAnimator.playInstallation(installation);
+                            
+                            // Listen for completion event
+                            this.events.once('installation-completed', (data) => {
+                                console.log('Installation completed:', data.result);
+                                this.updateTerritoryDisplay();
+                                
+                                // Update UI to show new resources
+                                this.updatePlayerDisplay();
+                            });
+                        } else {
+                            console.warn('Installation animator not available, falling back to direct placement');
+                            // Fallback: direct placement without animation
+                            territory.construct = newConstruct;
+                            newConstruct.status = 'active';
+                            this.updateTerritoryDisplay();
+                        }
+                    } catch (error) {
+                        console.error('Failed to initiate installation:', error);
+                        this.showStatusMessage(error.message, 'error');
+                        
+                        // Refund the gold on error
+                        updatedPlayer.gold += buildCost;
+                        this.updatePlayerDisplay();
+                    }
+                } else {
+                    // Fallback: direct placement without animation
+                    territory.construct = newConstruct;
+                    newConstruct.status = 'active';
+                    
+                    // Get pixel position for the territory
+                    const pixelPos = this.hexUtils.axialToPixel(territory.q, territory.r);
+                    
+                    // Create visual representation
+                    const constructGraphic = this.add.graphics();
+                    constructGraphic.fillStyle(0xFFFFFF, 0.8);
+                    constructGraphic.fillCircle(pixelPos.x, pixelPos.y, this.hexSize / 3);
+                    
+                    // Create level text
+                    const constructText = this.add.text(pixelPos.x, pixelPos.y, "1", {
+                        font: '24px Arial',
+                        fill: '#000000'
+                    }).setOrigin(0.5);
+                    
+                    // Store references to graphics objects
+                    territory.constructGraphic = constructGraphic;
+                    territory.constructText = constructText;
+                    
+                    // Add flash effect for feedback
+                    this.tweens.add({
+                        targets: [constructGraphic, constructText],
+                        alpha: 0.3,
+                        duration: 150,
+                        yoyo: true,
+                        repeat: 3
+                    });
+                    
+                    // Update UI
+                    this.updatePlayerDisplay();
+                    
+                    this.showStatusMessage(`Built ${this.formatTerritoryType(constructType)} on territory ${territory.id} for ${buildCost} gold`);
+                    
+                    // Update available territories count
+                    this.time.delayedCall(100, () => {
+                        this.setSelectMode('upgrade'); // Refresh the message with updated count
+                    });
+                    
+                    // Execute the action through turn manager
+                    this.gameFlowController.turnManager.executePlayerAction(updatedPlayer, {
+                        type: 'place_construct',
+                        target: territory.id,
+                        constructType: constructType
+                    });
                 }
-                if (territory.constructText) {
-                    territory.constructText.destroy();
-                }
-                
-                // Get pixel position for the territory
-                const pixelPos = this.hexUtils.axialToPixel(territory.q, territory.r);
-                
-                // Create visual representation
-                const constructGraphic = this.add.graphics();
-                constructGraphic.fillStyle(0xFFFFFF, 0.8);
-                constructGraphic.fillCircle(pixelPos.x, pixelPos.y, this.hexSize / 3);
-                
-                // Create level text
-                const constructText = this.add.text(pixelPos.x, pixelPos.y, "1", {
-                    font: '24px Arial',
-                    fill: '#000000'
-                }).setOrigin(0.5);
-                
-                // Store references to graphics objects
-                territory.constructGraphic = constructGraphic;
-                territory.constructText = constructText;
-                
-                // Add flash effect for feedback
-                this.tweens.add({
-                    targets: [constructGraphic, constructText],
-                    alpha: 0.3,
-                    duration: 150,
-                    yoyo: true,
-                    repeat: 3
-                });
-                
-                // Update UI
-                this.updatePlayerDisplay();
-                
-                this.showStatusMessage(`Built ${this.formatTerritoryType(constructType)} on territory ${territory.id} for ${buildCost} gold`);
-                
-                // Update available territories count
-                this.time.delayedCall(100, () => {
-                    this.setSelectMode('upgrade'); // Refresh the message with updated count
-                });
-                
-                // Execute the action through turn manager
-                this.gameFlowController.turnManager.executePlayerAction(updatedPlayer, {
-                    type: 'place_construct',
-                    target: territory.id,
-                    constructType: constructType
-                });
             } else {
                 console.log(`Not enough gold to build (need ${buildCost}, have ${updatedPlayer.gold})`);
                 this.showStatusMessage(`Not enough gold to build! You need ${buildCost} gold.`);
@@ -1547,6 +1746,66 @@ export default class GameScene extends Phaser.Scene {
         if (this.aetherDisplay) {
             this.aetherDisplay.textContent = currentPlayer.resources?.aether || 0;
         }
+    }
+    
+    /**
+     * Update the visual display of territories with constructs
+     */
+    updateTerritoryDisplay() {
+        if (!this.gameFlowController || !this.gameFlowController.territoryGrid) {
+            console.warn('Cannot update territory display - no territory grid');
+            return;
+        }
+        
+        // Iterate through all territories and update their construct visuals
+        const territories = this.gameFlowController.territoryGrid.territories || [];
+        territories.forEach(territory => {
+            if (territory.construct) {
+                // Get pixel position for the territory
+                const pixelPos = this.hexUtils.axialToPixel(territory.q, territory.r);
+                
+                // Clean up any existing visuals
+                if (territory.constructGraphic) {
+                    territory.constructGraphic.destroy();
+                }
+                if (territory.constructText) {
+                    territory.constructText.destroy();
+                }
+                
+                // Create visual representation
+                const constructGraphic = this.add.graphics();
+                constructGraphic.fillStyle(0xFFFFFF, 0.8);
+                constructGraphic.fillCircle(pixelPos.x, pixelPos.y, this.hexSize / 3);
+                
+                // Create level text
+                const constructText = this.add.text(pixelPos.x, pixelPos.y, 
+                    territory.construct.level ? territory.construct.level.toString() : "1", 
+                    {
+                        font: '24px Arial',
+                        fill: '#000000'
+                    }
+                ).setOrigin(0.5);
+                
+                // Store references to graphics objects
+                territory.constructGraphic = constructGraphic;
+                territory.constructText = constructText;
+                
+                // Add efficiency indicator if construct has efficiency
+                if (territory.construct.efficiency !== undefined && territory.construct.efficiency !== 1) {
+                    const efficiencyColor = territory.construct.efficiency > 1 ? 0x00ff00 : 0xff8800;
+                    const efficiencyText = this.add.text(
+                        pixelPos.x, 
+                        pixelPos.y + 25, 
+                        `${Math.round(territory.construct.efficiency * 100)}%`,
+                        {
+                            font: '12px Arial',
+                            fill: '#' + efficiencyColor.toString(16).padStart(6, '0')
+                        }
+                    ).setOrigin(0.5);
+                    territory.efficiencyText = efficiencyText;
+                }
+            }
+        });
     }
     
     produceResources() {
@@ -2383,9 +2642,9 @@ export default class GameScene extends Phaser.Scene {
     }
     
     startTurnTimer(player) {
-        console.log('startTurnTimer called for player:', player.id);
+        console.log('GameScene.startTurnTimer called for player:', player.id);
         
-        // Clear any existing timer
+        // Clear any existing timer first
         this.stopTurnTimer();
         
         // Don't show timer for automated phases
@@ -2404,43 +2663,35 @@ export default class GameScene extends Phaser.Scene {
         
         console.log('Phase config:', { currentPhase, timeLimit, player: player.id });
         
-        // Don't show timer for human players in interactive phases
-        if (!player.isAI && phaseConfig?.allowedActions?.length > 0) {
-            console.log('Timer hidden - human player in interactive phase');
-            if (this.timerContainer) {
-                this.timerContainer.style.display = 'none';
-            }
-            return;
+        // Show timer for ALL players (including humans)
+        console.log('Showing timer for all players');
+        
+        // Create or update the timer bar
+        if (!this.timerBar) {
+            this.createTimerBar();
         }
         
-        // Show timer
-        console.log('Showing timer, container exists:', !!this.timerContainer);
         if (this.timerContainer) {
             this.timerContainer.style.display = 'block';
-            console.log('Timer display set to block');
-        } else {
-            console.error('Timer container not found!');
         }
         
-        let remainingTime = timeLimit;
-        this.updateTimerDisplay(remainingTime);
+        // Store the start time to prevent timer jumping
+        this.timerStartTime = Date.now();
+        this.totalTime = timeLimit;
+        this.updateTimerBar(timeLimit, timeLimit);
         
-        // Update timer every second
+        // Update timer every 100ms for smooth animation
         this.turnTimerInterval = setInterval(() => {
-            remainingTime--;
-            this.updateTimerDisplay(remainingTime);
+            // Calculate remaining time based on elapsed time to prevent jumps
+            const elapsed = (Date.now() - this.timerStartTime) / 1000;
+            const remainingTime = Math.max(0, this.totalTime - elapsed);
             
-            // Change color when time is running low
-            if (remainingTime <= 10 && this.timerDisplay) {
-                this.timerDisplay.style.color = '#ff4444';
-            } else if (remainingTime <= 30 && this.timerDisplay) {
-                this.timerDisplay.style.color = '#ffaa44';
-            }
+            this.updateTimerBar(remainingTime, this.totalTime);
             
             if (remainingTime <= 0) {
                 this.stopTurnTimer();
             }
-        }, 1000);
+        }, 100);
     }
     
     stopTurnTimer() {
@@ -2453,18 +2704,97 @@ export default class GameScene extends Phaser.Scene {
             this.timerContainer.style.display = 'none';
         }
         
-        // Reset timer color
-        if (this.timerDisplay) {
-            this.timerDisplay.style.color = '#f5c542';
+        // Clean up timer bar references
+        this.timerBar = null;
+        this.timerText = null;
+    }
+    
+    createTimerBar() {
+        // Clear existing timer display content
+        if (this.timerContainer) {
+            this.timerContainer.innerHTML = '';
+            
+            // Create container for the bar
+            const barContainer = document.createElement('div');
+            barContainer.style.cssText = `
+                width: 100%;
+                height: 24px;
+                background-color: rgba(0, 0, 0, 0.5);
+                border: 2px solid #f5c542;
+                border-radius: 12px;
+                padding: 2px;
+                position: relative;
+                overflow: hidden;
+            `;
+            
+            // Create the progress bar
+            const progressBar = document.createElement('div');
+            progressBar.id = 'timer-progress-bar';
+            progressBar.style.cssText = `
+                height: 100%;
+                width: 100%;
+                background-color: #f5c542;
+                border-radius: 10px;
+                transition: width 0.1s linear, background-color 0.3s ease;
+            `;
+            
+            // Create time text overlay
+            const timeText = document.createElement('div');
+            timeText.id = 'timer-text';
+            timeText.style.cssText = `
+                position: absolute;
+                top: 50%;
+                left: 50%;
+                transform: translate(-50%, -50%);
+                color: white;
+                font-weight: bold;
+                font-size: 14px;
+                text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.8);
+                pointer-events: none;
+            `;
+            
+            barContainer.appendChild(progressBar);
+            barContainer.appendChild(timeText);
+            this.timerContainer.appendChild(barContainer);
+            
+            // Store references
+            this.timerBar = progressBar;
+            this.timerText = timeText;
         }
     }
     
-    updateTimerDisplay(seconds) {
-        if (!this.timerDisplay) return;
+    updateTimerBar(remainingTime, totalTime) {
+        if (!this.timerBar || !this.timerText) return;
         
-        const minutes = Math.floor(seconds / 60);
-        const secs = seconds % 60;
-        this.timerDisplay.textContent = `${minutes}:${secs.toString().padStart(2, '0')}`;
+        // Calculate percentage
+        const percentage = Math.max(0, (remainingTime / totalTime) * 100);
+        
+        // Update bar width
+        this.timerBar.style.width = percentage + '%';
+        
+        // Change color when time is running low (15 seconds)
+        if (remainingTime <= 15) {
+            this.timerBar.style.backgroundColor = '#ff4444';
+            if (this.timerBar.parentElement) {
+                this.timerBar.parentElement.style.borderColor = '#ff4444';
+            }
+        } else if (remainingTime <= 30) {
+            this.timerBar.style.backgroundColor = '#ffaa44';
+            if (this.timerBar.parentElement) {
+                this.timerBar.parentElement.style.borderColor = '#ffaa44';
+            }
+        } else {
+            this.timerBar.style.backgroundColor = '#f5c542';
+            if (this.timerBar.parentElement) {
+                this.timerBar.parentElement.style.borderColor = '#f5c542';
+            }
+        }
+        
+        // Update time text
+        const displaySeconds = Math.ceil(remainingTime);
+        const minutes = Math.floor(displaySeconds / 60);
+        const secs = displaySeconds % 60;
+        this.timerText.textContent = `${minutes}:${secs.toString().padStart(2, '0')}`;
     }
     
     destroy() {
@@ -2765,7 +3095,7 @@ export default class GameScene extends Phaser.Scene {
             border-bottom: 2px solid #FFD700;
         `;
         
-        const headers = ['Player', 'Gold', 'Mana', 'Food', 'Smithium', 'Total'];
+        const headers = ['Player', 'Mana', 'Vitality', 'Arcanum', 'Aether', 'Total'];
         headers.forEach(headerText => {
             const th = document.createElement('th');
             th.textContent = headerText;
@@ -2792,39 +3122,37 @@ export default class GameScene extends Phaser.Scene {
             playerProductions[player.id] = {
                 name: player.name,
                 territories: [],
-                totals: { gold: 0, mana: 0, food: 0, smithium: 0 }
+                totals: { gold: 0, mana: 0, food: 0, smithium: 0, vitality: 0, arcanum: 0, aether: 0 }
             };
         });
         
-        // Extract production data from summary
-        if (summary.summary) {
-            // New format with summary object
-            Object.entries(summary.summary).forEach(([playerId, playerData]) => {
-                if (playerProductions[playerId]) {
-                    // Add production data
-                    if (playerData.production) {
-                        Object.entries(playerData.production).forEach(([resource, amount]) => {
-                            playerProductions[playerId].totals[resource] = (playerProductions[playerId].totals[resource] || 0) + amount;
-                        });
-                    }
+        console.log('Production summary data structure:', summary);
+        
+        // Extract production data from summary - handle multiple formats
+        if (summary.playerProduction && Array.isArray(summary.playerProduction)) {
+            // Format: { playerProduction: [{playerId, resources: {mana: X, ...}}] }
+            summary.playerProduction.forEach(playerData => {
+                if (playerProductions[playerData.playerId]) {
+                    Object.entries(playerData.resources || {}).forEach(([resource, amount]) => {
+                        playerProductions[playerData.playerId].totals[resource] = amount;
+                    });
                 }
             });
-        } else if (summary.individualProduction) {
-            // Old format with individualProduction array
+        }
+        
+        if (summary.individualProduction && Array.isArray(summary.individualProduction)) {
+            // Format: { individualProduction: [{playerId, resource, amount, territoryId}] }
             summary.individualProduction.forEach(prod => {
                 if (playerProductions[prod.playerId]) {
-                    // Get construct type from territory if not in production data
-                    let constructType = prod.constructType;
-                    if (!constructType) {
-                        const territory = this.gameFlowController.stateManager.getTerritory(prod.territoryId);
-                        if (territory && territory.construct) {
-                            constructType = territory.construct.type;
-                        }
+                    // Add to totals if not already set by playerProduction
+                    if (!summary.playerProduction) {
+                        playerProductions[prod.playerId].totals[prod.resource] = 
+                            (playerProductions[prod.playerId].totals[prod.resource] || 0) + prod.amount;
                     }
                     
+                    // Add territory details
                     playerProductions[prod.playerId].territories.push({
                         territoryId: prod.territoryId,
-                        constructType: constructType || 'unknown',
                         resource: prod.resource,
                         amount: prod.amount
                     });
@@ -2854,7 +3182,7 @@ export default class GameScene extends Phaser.Scene {
             row.appendChild(playerCell);
             
             // Resource totals
-            const resources = ['gold', 'mana', 'food', 'smithium'];
+            const resources = ['mana', 'vitality', 'arcanum', 'aether'];
             resources.forEach(resource => {
                 const cell = document.createElement('td');
                 const amount = playerData.totals[resource] || 0;

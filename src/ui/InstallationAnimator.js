@@ -33,11 +33,32 @@ export default class InstallationAnimator {
         // Create the installation modal
         this.createInstallationModal(installation);
         
+        // Get territory position - handle both direct coordinates and hex coordinates
+        let x, y;
+        if (installation.territory.x !== undefined && installation.territory.y !== undefined) {
+            x = installation.territory.x;
+            y = installation.territory.y;
+        } else if (installation.territory.q !== undefined && installation.territory.r !== undefined) {
+            // Convert hex coordinates to pixel coordinates
+            const hexUtils = this.scene.hexUtils;
+            if (hexUtils) {
+                const pos = hexUtils.axialToPixel(installation.territory.q, installation.territory.r);
+                x = pos.x;
+                y = pos.y;
+            } else {
+                // Fallback calculation
+                const hexSize = 40;
+                x = hexSize * (Math.sqrt(3) * installation.territory.q + Math.sqrt(3) / 2 * installation.territory.r);
+                y = hexSize * (3 / 2 * installation.territory.r);
+            }
+        } else {
+            // Default to center if no coordinates available
+            x = this.scene.cameras.main.width / 2;
+            y = this.scene.cameras.main.height / 2;
+        }
+        
         // Create magical binding animation at territory location
-        this.createRitualAnimation(
-            installation.territory.x,
-            installation.territory.y
-        );
+        this.createRitualAnimation(x, y);
         
         // Create and animate progress bar
         this.animateProgress(installation);
@@ -328,10 +349,31 @@ export default class InstallationAnimator {
         const def = CONSTRUCT_DEFINITIONS[this.currentAnimation.construct.type];
         const particleColor = this.getParticleColor(def.resourceType);
         
+        // Get territory position
+        let x, y;
+        if (territory.x !== undefined && territory.y !== undefined) {
+            x = territory.x;
+            y = territory.y;
+        } else if (territory.q !== undefined && territory.r !== undefined) {
+            const hexUtils = this.scene.hexUtils;
+            if (hexUtils) {
+                const pos = hexUtils.axialToPixel(territory.q, territory.r);
+                x = pos.x;
+                y = pos.y;
+            } else {
+                const hexSize = 40;
+                x = hexSize * (Math.sqrt(3) * territory.q + Math.sqrt(3) / 2 * territory.r);
+                y = hexSize * (3 / 2 * territory.r);
+            }
+        } else {
+            x = this.scene.cameras.main.width / 2;
+            y = this.scene.cameras.main.height / 2;
+        }
+        
         // Create particle emitter configuration
         const particleConfig = {
-            x: territory.x,
-            y: territory.y,
+            x: x,
+            y: y,
             speed: { min: 50, max: 150 },
             scale: { start: 0.8, end: 0 },
             blendMode: 'ADD',
@@ -343,8 +385,8 @@ export default class InstallationAnimator {
         // Create particles using graphics
         const createParticle = () => {
             const particle = this.scene.add.circle(
-                territory.x + (Math.random() - 0.5) * 60,
-                territory.y + (Math.random() - 0.5) * 60,
+                x + (Math.random() - 0.5) * 60,
+                y + (Math.random() - 0.5) * 60,
                 3,
                 particleColor
             );
@@ -352,8 +394,8 @@ export default class InstallationAnimator {
             this.particles.push(particle);
             
             // Animate particle
-            const targetX = territory.x + (Math.random() - 0.5) * 200;
-            const targetY = territory.y + (Math.random() - 0.5) * 200;
+            const targetX = x + (Math.random() - 0.5) * 200;
+            const targetY = y + (Math.random() - 0.5) * 200;
             
             this.scene.tweens.add({
                 targets: particle,
@@ -407,6 +449,12 @@ export default class InstallationAnimator {
             duration: duration,
             ease: 'Linear',
             onUpdate: (tween) => {
+                // Check if elements still exist before updating
+                if (!this.progressPercent || !this.progressPercent.active || 
+                    !this.progressText || !this.progressText.active) {
+                    return;
+                }
+                
                 const progress = tween.progress;
                 this.progressPercent.setText(`${Math.floor(progress * 100)}%`);
                 
@@ -433,22 +481,95 @@ export default class InstallationAnimator {
      * Complete the installation and show results
      */
     completeInstallation(installation) {
-        // Get construct manager and process installation
-        const constructManager = this.scene.gameFlowController?.constructManager;
-        if (!constructManager) {
-            console.error('ConstructManager not found');
-            this.cleanup();
-            return;
-        }
-        
         // Show dice rolling animation
         this.showDiceRoll(() => {
-            // Process the installation
-            const result = constructManager.processInstallation(installation);
+            // Roll dice and determine result
+            const roll = Math.floor(Math.random() * 6) + 1;
+            const result = this.determineInstallationResult(roll, installation);
+            
+            // Apply the result
+            if (result.success) {
+                installation.construct.status = 'active';
+                installation.construct.efficiency = result.efficiency;
+                if (installation.territory) {
+                    installation.territory.construct = installation.construct;
+                }
+            } else {
+                installation.construct.status = 'damaged';
+                installation.construct.efficiency = 0;
+            }
+            
+            // Add roll value to result
+            result.rollValue = roll;
             
             // Show result
             this.showInstallationResult(result, installation);
         });
+    }
+    
+    /**
+     * Determine installation result based on dice roll
+     */
+    determineInstallationResult(roll, installation) {
+        let outcome;
+        let efficiency = 1.0;
+        let success = true;
+        let message;
+        let bonus;
+        let penalty;
+        
+        switch(roll) {
+            case 1:
+                outcome = 'Critical Failure';
+                success = false;
+                efficiency = 0;
+                message = 'The magical binding completely failed! The construct is lost.';
+                penalty = 'Construct destroyed';
+                break;
+            case 2:
+                outcome = 'Failure';
+                success = false;
+                efficiency = 0;
+                message = 'The ritual failed. The construct is damaged and non-functional.';
+                penalty = 'Construct damaged';
+                break;
+            case 3:
+                outcome = 'Partial Success';
+                success = true;
+                efficiency = 0.7;
+                message = 'The binding is weak but holding. Reduced efficiency.';
+                penalty = '-30% production';
+                break;
+            case 4:
+                outcome = 'Success';
+                success = true;
+                efficiency = 1.0;
+                message = 'The construct is successfully bound to the territory.';
+                break;
+            case 5:
+                outcome = 'Great Success';
+                success = true;
+                efficiency = 1.2;
+                message = 'Strong magical resonance! Enhanced production.';
+                bonus = '+20% production';
+                break;
+            case 6:
+                outcome = 'Critical Success';
+                success = true;
+                efficiency = 1.5;
+                message = 'Perfect attunement! The construct thrives in this location.';
+                bonus = '+50% production';
+                break;
+        }
+        
+        return {
+            success,
+            outcome,
+            efficiency,
+            message,
+            bonus,
+            penalty
+        };
     }
 
     /**
@@ -472,13 +593,18 @@ export default class InstallationAnimator {
         const rollTimer = this.scene.time.addEvent({
             delay: 100,
             callback: () => {
-                dice.setText(String(Math.floor(Math.random() * 6) + 1));
                 rollCount++;
                 
                 if (rollCount >= 10) {
+                    // Final roll
                     rollTimer.destroy();
                     dice.destroy();
                     if (callback) callback();
+                } else {
+                    // Only update text if dice still exists
+                    if (dice && dice.active) {
+                        dice.setText(String(Math.floor(Math.random() * 6) + 1));
+                    }
                 }
             },
             repeat: 9
@@ -539,19 +665,113 @@ export default class InstallationAnimator {
         });
         
         bg.on('pointerup', () => {
-            if (confirm('Are you sure? The construct will be lost!')) {
-                this.cancelInstallation();
-            }
+            this.showCancelConfirmation();
         });
         
         return button;
     }
 
     /**
+     * Show cancel confirmation dialog
+     */
+    showCancelConfirmation() {
+        // Stop any ongoing animations
+        this.scene.tweens.killTweensOf(this.progressBar);
+        
+        // Create confirmation overlay
+        const confirmOverlay = this.scene.add.container(0, 0);
+        confirmOverlay.setDepth(1200);
+        this.installationModal.add(confirmOverlay);
+        
+        // Darken background
+        const darkBg = this.scene.add.rectangle(0, 0, 500, 350, 0x000000, 0.8);
+        confirmOverlay.add(darkBg);
+        
+        // Confirmation box
+        const confirmBox = this.scene.add.container(0, 0);
+        confirmOverlay.add(confirmBox);
+        
+        const boxBg = this.scene.add.rectangle(0, 0, 300, 150, 0x220000, 0.95);
+        boxBg.setStrokeStyle(3, 0xff0000);
+        confirmBox.add(boxBg);
+        
+        // Warning text
+        const warningText = this.scene.add.text(0, -40, '⚠️ WARNING', {
+            fontSize: '20px',
+            color: '#ff4444',
+            fontFamily: 'Arial',
+            fontStyle: 'bold'
+        });
+        warningText.setOrigin(0.5);
+        confirmBox.add(warningText);
+        
+        const messageText = this.scene.add.text(0, -10, 'Cancel installation?', {
+            fontSize: '16px',
+            color: '#ffffff',
+            fontFamily: 'Arial'
+        });
+        messageText.setOrigin(0.5);
+        confirmBox.add(messageText);
+        
+        const lossText = this.scene.add.text(0, 15, 'The construct will be LOST!', {
+            fontSize: '14px',
+            color: '#ffaa44',
+            fontFamily: 'Arial'
+        });
+        lossText.setOrigin(0.5);
+        confirmBox.add(lossText);
+        
+        // Buttons
+        const yesBtn = this.createConfirmButton('Yes, Cancel', -70, 50, () => {
+            confirmOverlay.destroy();
+            this.cancelInstallation();
+        });
+        confirmBox.add(yesBtn);
+        
+        const noBtn = this.createConfirmButton('No, Continue', 70, 50, () => {
+            confirmOverlay.destroy();
+            // Resume animation if not cancelled
+            if (this.progressBar && this.scene.tweens.isTweening(this.progressBar) === false) {
+                // Animation was paused, just continue
+            }
+        });
+        confirmBox.add(noBtn);
+    }
+    
+    /**
+     * Create confirmation button
+     */
+    createConfirmButton(text, x, y, callback) {
+        const button = this.scene.add.container(x, y);
+        
+        const bg = this.scene.add.rectangle(0, 0, 120, 30, 0x444444);
+        bg.setStrokeStyle(2, 0x666666);
+        bg.setInteractive();
+        
+        const label = this.scene.add.text(0, 0, text, {
+            fontSize: '12px',
+            color: '#ffffff',
+            fontFamily: 'Arial'
+        });
+        label.setOrigin(0.5);
+        
+        button.add([bg, label]);
+        
+        bg.on('pointerover', () => bg.setFillStyle(0x666666));
+        bg.on('pointerout', () => bg.setFillStyle(0x444444));
+        bg.on('pointerup', callback);
+        
+        return button;
+    }
+    
+    /**
      * Cancel the installation
      */
     cancelInstallation() {
         if (this.currentAnimation) {
+            // Immediately stop all tweens
+            this.scene.tweens.killAll();
+            
             // Mark construct as lost
             this.currentAnimation.construct.status = 'lost';
             
@@ -564,9 +784,11 @@ export default class InstallationAnimator {
                 }
             }
             
-            // Show cancellation message
-            this.progressText.setText('Installation cancelled - Construct lost!');
-            this.progressText.setColor('#ff4444');
+            // Show cancellation message if progress text still exists
+            if (this.progressText && this.progressText.active) {
+                this.progressText.setText('Installation cancelled - Construct lost!');
+                this.progressText.setColor('#ff4444');
+            }
             
             // Clean up after delay
             this.scene.time.delayedCall(2000, () => {
