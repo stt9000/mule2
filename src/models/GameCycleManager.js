@@ -267,9 +267,12 @@ export default class GameCycleManager {
      * Initialize auction phase
      */
     initializeAuctions() {
+        console.log('GameCycleManager: Initializing auction phase');
+        console.log('Broadcasting auction_phase.initialized event');
         this.broadcastEvent('auction_phase.initialized', {
             cycle: this.currentCycle
         });
+        console.log('auction_phase.initialized event broadcast complete');
     }
 
     /**

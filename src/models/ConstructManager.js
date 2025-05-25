@@ -248,8 +248,26 @@ export default class ConstructManager {
      * @returns {Object} Result object with success status and details
      */
     processInstallation(installation) {
-        // Roll dice (1-6)
-        const roll = Math.floor(Math.random() * 6) + 1;
+        // Get current cycle
+        let currentCycle = 1;
+        if (this.game.gameCycleManager) {
+            currentCycle = this.game.gameCycleManager.currentCycle;
+        } else if (this.game.gameFlowController?.gameCycleManager) {
+            currentCycle = this.game.gameFlowController.gameCycleManager.currentCycle;
+        } else if (this.game.stateManager?.gameState?.currentCycle) {
+            currentCycle = this.game.stateManager.gameState.currentCycle;
+        }
+        
+        // Roll dice - in cycle 1, limit to 3-6 range
+        let roll;
+        if (currentCycle === 1) {
+            // In cycle 1, roll 3-6 (no critical failures)
+            roll = Math.floor(Math.random() * 4) + 3;
+        } else {
+            // Normal 1-6 roll for later cycles
+            roll = Math.floor(Math.random() * 6) + 1;
+        }
+        
         const result = this.resolveInstallationRoll(roll, installation);
 
         if (result.success) {
@@ -292,37 +310,45 @@ export default class ConstructManager {
             case 6:
                 return {
                     success: true,
-                    efficiency: 1.1, // 110% efficiency
+                    efficiency: 1.5, // 150% efficiency
                     rollValue: roll,
-                    outcome: 'perfect',
-                    message: 'Perfect installation! The construct resonates with exceptional power.',
-                    bonus: '+10% production efficiency'
+                    outcome: 'critical_success',
+                    message: 'Perfect attunement! The construct thrives in this location.',
+                    bonus: '+50% production efficiency'
+                };
+            case 5:
+                return {
+                    success: true,
+                    efficiency: 1.2, // 120% efficiency
+                    rollValue: roll,
+                    outcome: 'great_success',
+                    message: 'Strong magical resonance! Enhanced production.',
+                    bonus: '+20% production efficiency'
                 };
             case 4:
-            case 5:
                 return {
                     success: true,
                     efficiency: 1.0, // 100% efficiency
                     rollValue: roll,
-                    outcome: 'good',
-                    message: 'Successful installation! The construct is operating normally.'
+                    outcome: 'success',
+                    message: 'The construct is successfully bound to the territory.'
                 };
             case 3:
                 return {
                     success: true,
-                    efficiency: 0.75, // 75% efficiency
+                    efficiency: 0.7, // 70% efficiency
                     rollValue: roll,
-                    outcome: 'poor',
-                    message: 'Unstable binding. The construct operates at reduced efficiency.',
-                    penalty: '-25% production efficiency'
+                    outcome: 'partial_success',
+                    message: 'The binding is weak but holding. Reduced efficiency.',
+                    penalty: '-30% production efficiency'
                 };
             case 2:
                 return {
                     success: false,
                     efficiency: 0,
                     rollValue: roll,
-                    outcome: 'backfire',
-                    message: 'Magical backfire! The binding ritual failed and damaged the construct.',
+                    outcome: 'failure',
+                    message: 'The ritual failed. The construct is damaged and non-functional.',
                     penalty: 'Construct damaged, requires repair'
                 };
             case 1:
@@ -331,15 +357,15 @@ export default class ConstructManager {
                     efficiency: 0,
                     rollValue: roll,
                     outcome: 'critical_failure',
-                    message: 'Critical failure! The construct was severely damaged during installation.',
-                    penalty: 'Construct heavily damaged, expensive repair needed'
+                    message: 'The magical binding completely failed! The construct is lost.',
+                    penalty: 'Construct destroyed'
                 };
             default:
                 return {
                     success: true,
                     efficiency: 1.0,
                     rollValue: roll,
-                    outcome: 'good',
+                    outcome: 'success',
                     message: 'Installation completed.'
                 };
         }

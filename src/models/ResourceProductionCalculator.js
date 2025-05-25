@@ -49,6 +49,10 @@ export default class ResourceProductionCalculator {
         const level = construct.level || 1;
         production *= (1 + (level - 1) * this.levelBonus);
         
+        // Apply efficiency from dice roll (critical fail = 0, normal = 1.0, good = 1.2, perfect = 1.5)
+        const efficiency = construct.efficiency !== undefined ? construct.efficiency : 1.0;
+        production *= efficiency;
+        
         // Apply territory type modifier
         const terrainModifiers = this.territoryModifiers[territory.terrainType] || {};
         const terrainMod = terrainModifiers[resourceType] || 1.0;
@@ -75,6 +79,7 @@ export default class ResourceProductionCalculator {
             modifiers: {
                 base: this.baseProduction[resourceType],
                 level: level,
+                efficiency: efficiency,
                 terrain: terrainMod,
                 synergy: this.hasSynergy(territory.terrainType, construct.type),
                 interference: interferenceCount

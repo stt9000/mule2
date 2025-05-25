@@ -481,10 +481,28 @@ export default class InstallationAnimator {
      * Complete the installation and show results
      */
     completeInstallation(installation) {
+        // Get current cycle
+        let currentCycle = 1;
+        if (this.scene.gameCycleManager) {
+            currentCycle = this.scene.gameCycleManager.currentCycle;
+        } else if (this.scene.gameFlowController?.gameCycleManager) {
+            currentCycle = this.scene.gameFlowController.gameCycleManager.currentCycle;
+        } else if (this.scene.stateManager?.gameState?.currentCycle) {
+            currentCycle = this.scene.stateManager.gameState.currentCycle;
+        }
+        
         // Show dice rolling animation
         this.showDiceRoll(() => {
-            // Roll dice and determine result
-            const roll = Math.floor(Math.random() * 6) + 1;
+            // Roll dice - in cycle 1, limit to 3-6 range
+            let roll;
+            if (currentCycle === 1) {
+                // In cycle 1, roll 3-6 (no critical failures)
+                roll = Math.floor(Math.random() * 4) + 3;
+            } else {
+                // Normal 1-6 roll for later cycles
+                roll = Math.floor(Math.random() * 6) + 1;
+            }
+            
             const result = this.determineInstallationResult(roll, installation);
             
             // Apply the result
@@ -576,8 +594,22 @@ export default class InstallationAnimator {
      * Show dice rolling animation
      */
     showDiceRoll(callback) {
+        // Get current cycle
+        let currentCycle = 1;
+        if (this.scene.gameCycleManager) {
+            currentCycle = this.scene.gameCycleManager.currentCycle;
+        } else if (this.scene.gameFlowController?.gameCycleManager) {
+            currentCycle = this.scene.gameFlowController.gameCycleManager.currentCycle;
+        } else if (this.scene.stateManager?.gameState?.currentCycle) {
+            currentCycle = this.scene.stateManager.gameState.currentCycle;
+        }
+        
         // Update progress text
-        this.progressText.setText('🎲 Rolling dice...');
+        if (currentCycle === 1) {
+            this.progressText.setText('🎲 Rolling dice... (Cycle 1: 3-6 only)');
+        } else {
+            this.progressText.setText('🎲 Rolling dice...');
+        }
         
         // Create dice display
         const dice = this.scene.add.text(0, 20, '?', {
@@ -603,7 +635,12 @@ export default class InstallationAnimator {
                 } else {
                     // Only update text if dice still exists
                     if (dice && dice.active) {
-                        dice.setText(String(Math.floor(Math.random() * 6) + 1));
+                        // Show appropriate range based on cycle
+                        if (currentCycle === 1) {
+                            dice.setText(String(Math.floor(Math.random() * 4) + 3));
+                        } else {
+                            dice.setText(String(Math.floor(Math.random() * 6) + 1));
+                        }
                     }
                 }
             },

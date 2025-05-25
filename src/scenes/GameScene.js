@@ -4,6 +4,17 @@ import { TERRITORY_COLORS, GAME_SETTINGS, PLAYER_COLORS, CONSTRUCT_DEFINITIONS }
 import HexUtils from '../utils/HexUtils.js';
 import ProductionSummaryPanel from '../ui/panels/ProductionSummaryPanel.js';
 import ConstructSystemIntegration from '../integration/ConstructSystemIntegration.js';
+import AuctionHallPanel from '../ui/panels/AuctionHallPanel.js';
+import PlayerActionPanel from '../ui/panels/PlayerActionPanel.js';
+import AuctionManager from '../models/AuctionManager.js';
+import MarketDataService from '../models/MarketDataService.js';
+import TransactionEngine from '../models/TransactionEngine.js';
+import AuctionSystemIntegration from '../integration/AuctionSystemIntegration.js';
+import MarketEventSystem from '../models/MarketEventSystem.js';
+import ResourceQueueManager from '../models/ResourceQueueManager.js';
+import AIBiddingStrategy from '../models/AIBiddingStrategy.js';
+import PricePredictionSystem from '../models/PricePredictionSystem.js';
+import AuctionAnalytics from '../models/AuctionAnalytics.js';
 
 export default class GameScene extends Phaser.Scene {
     constructor() {
@@ -19,6 +30,18 @@ export default class GameScene extends Phaser.Scene {
         this.selectionHighlight = null; // Territory selection highlight
         this.selectionTween = null; // Selection animation tween
         this.selectedTerritory = null; // Currently selected territory
+        
+        // UI element tracking
+        this.territoryLabels = []; // All territory type labels
+        this.constructIndicators = []; // All construct level indicators
+        
+        // Auction system components
+        this.auctionManager = null;
+        this.marketDataService = null;
+        this.transactionEngine = null;
+        this.auctionHallPanel = null;
+        this.playerActionPanel = null;
+        this.auctionSystemIntegration = null;
     }
 
     create() {
@@ -40,6 +63,9 @@ export default class GameScene extends Phaser.Scene {
             mapSize: this.mapSize,
             startingGold: GAME_SETTINGS.STARTING_GOLD
         });
+        
+        // Initialize auction system components
+        this.initializeAuctionSystem();
         
         // Start the game flow (phases and turns)
         console.log('Starting game flow...');
@@ -115,6 +141,20 @@ export default class GameScene extends Phaser.Scene {
         // Gold transaction events
         this.gameFlowController.on('gold.deducted', this.onGoldDeducted.bind(this));
         this.gameFlowController.on('gold.added', this.onGoldAdded.bind(this));
+        
+        // Auction phase events
+        console.log('Setting up auction phase listener');
+        this.gameFlowController.on('auction_phase.initialized', (event) => {
+            console.log('auction_phase.initialized event received in listener');
+            this.onAuctionPhaseInitialized(event);
+        });
+        
+        // Listen for auction phase ending
+        this.gameFlowController.on('phase.changed', (event) => {
+            if (event.previousPhase === 'auction_phase') {
+                this.onAuctionPhaseEnded();
+            }
+        });
     }
     
     getInitialPlayers() {
@@ -751,6 +791,10 @@ export default class GameScene extends Phaser.Scene {
                 align: 'center'
             });
             label.setOrigin(0.5);
+            
+            // Store reference for hiding/showing
+            territory.typeText = label;
+            this.territoryLabels.push(label);
         });
         
         // Listen for territory events from game flow
@@ -1300,6 +1344,7 @@ export default class GameScene extends Phaser.Scene {
                             // Fallback: direct placement without animation
                             territory.construct = newConstruct;
                             newConstruct.status = 'active';
+                            newConstruct.efficiency = 1.0; // Default 100% efficiency for direct placement
                             this.updateTerritoryDisplay();
                         }
                     } catch (error) {
@@ -1314,6 +1359,7 @@ export default class GameScene extends Phaser.Scene {
                     // Fallback: direct placement without animation
                     territory.construct = newConstruct;
                     newConstruct.status = 'active';
+                    newConstruct.efficiency = 1.0; // Default 100% efficiency for direct placement
                     
                     // Get pixel position for the territory
                     const pixelPos = this.hexUtils.axialToPixel(territory.q, territory.r);
@@ -2118,6 +2164,19 @@ export default class GameScene extends Phaser.Scene {
             this.time.delayedCall(500, () => {
                 this.updateAllTerritoryVisuals();
             });
+        }
+        
+        // If auction phase is ending, hide auction hall and show game board
+        if (phase === 'auction_phase') {
+            // Notify integration first to process remaining trades
+            if (this.auctionSystemIntegration) {
+                this.auctionSystemIntegration.onAuctionPhaseEnded();
+            }
+            
+            this.stopAuctionUpdates();
+            this.hideAuctionHall();
+            this.showGameBoard();
+            this.showStatusMessage('Auction phase complete. Returning to the game board.');
         }
     }
     
@@ -3129,11 +3188,11 @@ export default class GameScene extends Phaser.Scene {
         console.log('Production summary data structure:', summary);
         
         // Extract production data from summary - handle multiple formats
-        if (summary.playerProduction && Array.isArray(summary.playerProduction)) {
-            // Format: { playerProduction: [{playerId, resources: {mana: X, ...}}] }
-            summary.playerProduction.forEach(playerData => {
+        if (summary.playerSummaries && Array.isArray(summary.playerSummaries)) {
+            // Format: { playerSummaries: [{playerId, totalResources: {mana: X, ...}}] }
+            summary.playerSummaries.forEach(playerData => {
                 if (playerProductions[playerData.playerId]) {
-                    Object.entries(playerData.resources || {}).forEach(([resource, amount]) => {
+                    Object.entries(playerData.totalResources || {}).forEach(([resource, amount]) => {
                         playerProductions[playerData.playerId].totals[resource] = amount;
                     });
                 }
@@ -3144,8 +3203,8 @@ export default class GameScene extends Phaser.Scene {
             // Format: { individualProduction: [{playerId, resource, amount, territoryId}] }
             summary.individualProduction.forEach(prod => {
                 if (playerProductions[prod.playerId]) {
-                    // Add to totals if not already set by playerProduction
-                    if (!summary.playerProduction) {
+                    // Add to totals if not already set by playerSummaries
+                    if (!summary.playerSummaries) {
                         playerProductions[prod.playerId].totals[prod.resource] = 
                             (playerProductions[prod.playerId].totals[prod.resource] || 0) + prod.amount;
                     }
@@ -3156,8 +3215,6 @@ export default class GameScene extends Phaser.Scene {
                         resource: prod.resource,
                         amount: prod.amount
                     });
-                    
-                    playerProductions[prod.playerId].totals[prod.resource] += prod.amount;
                 }
             });
         }
@@ -3345,5 +3402,382 @@ export default class GameScene extends Phaser.Scene {
             ease: 'Power2',
             onComplete: () => floatingText.destroy()
         });
+    }
+    
+    initializeAuctionSystem() {
+        console.log('Initializing auction system...');
+        
+        try {
+            // Create auction system components
+            this.auctionManager = new AuctionManager(this.gameFlowController);
+            console.log('AuctionManager created');
+            
+            this.marketDataService = new MarketDataService(this.gameFlowController.stateManager);
+            console.log('MarketDataService created');
+            
+            this.transactionEngine = new TransactionEngine(
+                this.gameFlowController.stateManager,
+                this.marketDataService
+            );
+            console.log('TransactionEngine created');
+            
+            // Create market event system
+            this.marketEventSystem = new MarketEventSystem(this.marketDataService);
+            console.log('MarketEventSystem created');
+            
+            // Create resource queue manager
+            this.resourceQueueManager = new ResourceQueueManager(this.auctionManager);
+            console.log('ResourceQueueManager created');
+            
+            // Create auction hall panel (initially hidden)
+            console.log('Creating AuctionHallPanel with dimensions:', {
+                width: this.cameras.main.width,
+                height: this.cameras.main.height
+            });
+            
+            this.auctionHallPanel = new AuctionHallPanel(this, {
+                x: 0,
+                y: 0,
+                width: this.cameras.main.width || 1024,
+                height: this.cameras.main.height || 768
+            });
+            console.log('AuctionHallPanel created');
+            
+            // Create player action panel
+            this.playerActionPanel = new PlayerActionPanel(this, {
+                x: 50,
+                y: 400,
+                width: 300,
+                height: 200
+            });
+            console.log('PlayerActionPanel created');
+            
+            // Create auction system integration
+            this.auctionSystemIntegration = new AuctionSystemIntegration(this);
+            this.auctionSystemIntegration.initialize(
+                this.auctionManager,
+                this.marketDataService,
+                this.transactionEngine,
+                this.gameFlowController.stateManager,
+                this.marketEventSystem,
+                this.resourceQueueManager
+            );
+            console.log('AuctionSystemIntegration created');
+            
+            // Make auction components accessible to game flow controller
+            this.gameFlowController.auctionManager = this.auctionManager;
+            this.gameFlowController.marketDataService = this.marketDataService;
+            this.gameFlowController.transactionEngine = this.transactionEngine;
+            
+            console.log('Auction system initialization complete');
+        } catch (error) {
+            console.error('Error initializing auction system:', error);
+        }
+    }
+    
+    onAuctionPhaseInitialized(event) {
+        console.log('Auction phase initialized:', event);
+        console.log('AuctionManager exists:', !!this.auctionManager);
+        console.log('AuctionHallPanel exists:', !!this.auctionHallPanel);
+        
+        // Check if auction system is initialized
+        if (!this.auctionManager || !this.auctionHallPanel) {
+            console.error('Auction system not properly initialized!');
+            return;
+        }
+        
+        // Hide the game board UI elements
+        this.hideGameBoard();
+        
+        // Show the auction hall
+        this.showAuctionHall();
+        
+        // Initialize AI bidding if needed
+        if (!this.aiBiddingStrategy) {
+            this.initializeAIBidding();
+        }
+        
+        // Start the auction manager
+        this.auctionManager.startAuctionPhase();
+        
+        // Update UI
+        this.showStatusMessage('Welcome to the Auction Hall! Place your bids for magical resources.');
+        
+        // Start updating auction UI
+        this.startAuctionUpdates();
+        
+        // Notify integration
+        if (this.auctionSystemIntegration) {
+            this.auctionSystemIntegration.onAuctionPhaseStarted();
+        }
+        
+        // Schedule AI bidding
+        this.scheduleAIBidding();
+    }
+    
+    hideGameBoard() {
+        console.log('Hiding game board...');
+        
+        // Hide territory graphics
+        this.territoryGraphics.forEach(graphics => {
+            graphics.visible = false;
+        });
+        
+        // Hide all territory labels
+        this.territoryLabels.forEach(label => {
+            label.visible = false;
+        });
+        
+        // Hide all territory texts and constructs stored on territory objects
+        if (this.gameFlowController?.territoryGrid?.territories) {
+            this.gameFlowController.territoryGrid.territories.forEach(territory => {
+                if (territory.hexGraphics) territory.hexGraphics.visible = false;
+                if (territory.ownerIndicator) territory.ownerIndicator.visible = false;
+                if (territory.ownershipMarker) territory.ownershipMarker.visible = false;
+                if (territory.typeText) territory.typeText.visible = false;
+                if (territory.constructSprite) territory.constructSprite.visible = false;
+                if (territory.constructText) territory.constructText.visible = false;
+                if (territory.constructGraphic) territory.constructGraphic.visible = false;
+                if (territory.constructVisual) territory.constructVisual.visible = false;
+                if (territory.efficiencyText) territory.efficiencyText.visible = false;
+                if (territory.hex) territory.hex.visible = false;
+            });
+        }
+        
+        // Hide selection highlight
+        if (this.selectionHighlight) {
+            this.selectionHighlight.visible = false;
+        }
+        
+        // Hide DOM territory details
+        if (this.territoryDetails) {
+            this.territoryDetails.style.display = 'none';
+        }
+    }
+    
+    showGameBoard() {
+        // Show territory graphics
+        this.territoryGraphics.forEach(graphics => {
+            graphics.visible = true;
+        });
+        
+        // Show all territory labels
+        this.territoryLabels.forEach(label => {
+            label.visible = true;
+        });
+        
+        // Show territory texts and constructs
+        if (this.gameFlowController?.territoryGrid?.territories) {
+            this.gameFlowController.territoryGrid.territories.forEach(territory => {
+                if (territory.hexGraphics) territory.hexGraphics.visible = true;
+                if (territory.ownerIndicator) territory.ownerIndicator.visible = true;
+                if (territory.typeText) territory.typeText.visible = true;
+                if (territory.constructSprite) territory.constructSprite.visible = true;
+                if (territory.constructText) territory.constructText.visible = true;
+                if (territory.constructGraphic) territory.constructGraphic.visible = true;
+            });
+        }
+        
+        // Show DOM territory details
+        if (this.territoryDetails) {
+            this.territoryDetails.style.display = 'block';
+        }
+    }
+    
+    showAuctionHall() {
+        console.log('showAuctionHall called');
+        console.log('auctionHallPanel exists:', !!this.auctionHallPanel);
+        if (this.auctionHallPanel) {
+            console.log('Calling auctionHallPanel.show()');
+            this.auctionHallPanel.show();
+        } else {
+            console.error('auctionHallPanel is null!');
+        }
+    }
+    
+    hideAuctionHall() {
+        this.auctionHallPanel.hide();
+    }
+    
+    startAuctionUpdates() {
+        // Create a timer to update auction UI periodically
+        this.auctionUpdateTimer = this.time.addEvent({
+            delay: 100, // Update every 100ms for smooth animations
+            callback: () => {
+                if (this.auctionHallPanel && this.auctionManager) {
+                    this.auctionHallPanel.update();
+                }
+            },
+            loop: true
+        });
+    }
+    
+    stopAuctionUpdates() {
+        if (this.auctionUpdateTimer) {
+            this.auctionUpdateTimer.destroy();
+            this.auctionUpdateTimer = null;
+        }
+    }
+    
+    initializeAIBidding() {
+        console.log('Initializing AI bidding system...');
+        
+        // Create AI bidding strategy
+        this.aiBiddingStrategy = new AIBiddingStrategy(this.auctionManager, this.marketDataService);
+        
+        // Create price prediction system
+        this.pricePredictionSystem = new PricePredictionSystem(this.marketDataService);
+        
+        // Create auction analytics
+        this.auctionAnalytics = new AuctionAnalytics(this.auctionManager, this.marketDataService);
+        
+        // Assign strategies to AI players
+        const players = this.gameFlowController.stateManager.gameState.players;
+        Object.values(players).forEach((player, index) => {
+            if (player.isAI) {
+                // Assign different strategies to different AI players
+                const strategies = ['conservative', 'balanced', 'aggressive'];
+                const strategyIndex = index % strategies.length;
+                this.aiBiddingStrategy.assignStrategy(player.id, strategies[strategyIndex]);
+                console.log(`Assigned ${strategies[strategyIndex]} strategy to AI ${player.name}`);
+            }
+        });
+    }
+    
+    scheduleAIBidding() {
+        console.log('Scheduling AI bidding...');
+        
+        // Clear any existing timer
+        if (this.aiBiddingTimer) {
+            this.aiBiddingTimer.destroy();
+        }
+        
+        // Schedule AI decisions every few seconds
+        this.aiBiddingTimer = this.time.addEvent({
+            delay: 5000, // AI makes decisions every 5 seconds
+            callback: this.makeAIBiddingDecisions,
+            callbackScope: this,
+            loop: true
+        });
+        
+        // Make initial AI decisions after short delay
+        this.time.delayedCall(2000, this.makeAIBiddingDecisions, [], this);
+    }
+    
+    makeAIBiddingDecisions() {
+        if (!this.auctionManager || this.auctionManager.auctionPhase !== 'active') {
+            return;
+        }
+        
+        const currentResource = this.auctionManager.currentResource;
+        if (!currentResource) {
+            return;
+        }
+        
+        console.log(`Making AI bidding decisions for ${currentResource}...`);
+        
+        // Get all AI players
+        const players = this.gameFlowController.stateManager.gameState.players;
+        Object.values(players).forEach(player => {
+            if (player.isAI) {
+                // Make bidding decision
+                const decision = this.aiBiddingStrategy.makeBiddingDecision(player, currentResource);
+                
+                if (decision) {
+                    // Execute decision with some randomness
+                    const delay = Math.random() * 2000; // 0-2 second random delay
+                    this.time.delayedCall(delay, () => {
+                        this.aiBiddingStrategy.executeDecision(player, decision);
+                        
+                        // Record trade for analytics when it happens
+                        if (this.auctionAnalytics) {
+                            // Analytics will record actual trades through integration
+                        }
+                    });
+                }
+            }
+        });
+    }
+    
+    stopAIBidding() {
+        if (this.aiBiddingTimer) {
+            this.aiBiddingTimer.destroy();
+            this.aiBiddingTimer = null;
+        }
+    }
+    
+    onAuctionPhaseEnded() {
+        console.log('Auction phase ended');
+        
+        // Stop AI bidding
+        this.stopAIBidding();
+        
+        // Stop auction updates
+        this.stopAuctionUpdates();
+        
+        // Hide auction hall
+        if (this.auctionHallPanel) {
+            this.auctionHallPanel.hide();
+        }
+        
+        // Show game board again
+        this.showGameBoard();
+        
+        // Display analytics summary if available
+        if (this.auctionAnalytics) {
+            const summary = this.auctionAnalytics.getSummary();
+            console.log('Auction Analytics Summary:', summary);
+            
+            // Show summary message
+            const totalTrades = summary.overall.totalTrades;
+            const avgPrice = summary.overall.averagePrice;
+            this.showStatusMessage(`Auction complete! ${totalTrades} trades executed at avg price ${avgPrice}GP`);
+        }
+    }
+    
+    showGameBoard() {
+        console.log('Showing game board...');
+        
+        // Show territory graphics
+        this.territoryGraphics.forEach(graphics => {
+            graphics.visible = true;
+        });
+        
+        // Show all territory labels
+        this.territoryLabels.forEach(label => {
+            label.visible = true;
+        });
+        
+        // Show all territory texts and constructs
+        if (this.gameFlowController?.territoryGrid?.territories) {
+            this.gameFlowController.territoryGrid.territories.forEach(territory => {
+                if (territory.hexGraphics) territory.hexGraphics.visible = true;
+                if (territory.ownerIndicator) territory.ownerIndicator.visible = true;
+                if (territory.ownershipMarker) territory.ownershipMarker.visible = true;
+                if (territory.constructIcon) territory.constructIcon.visible = true;
+                if (territory.hex) territory.hex.visible = true;
+                if (territory.typeText) territory.typeText.visible = true;
+                if (territory.constructSprite) territory.constructSprite.visible = true;
+                if (territory.constructText) territory.constructText.visible = true;
+                if (territory.constructGraphic) territory.constructGraphic.visible = true;
+                if (territory.constructVisual) territory.constructVisual.visible = true;
+                if (territory.efficiencyText) territory.efficiencyText.visible = true;
+            });
+        }
+        
+        // Show territory details panel if it exists
+        if (this.territoryDetails) {
+            this.territoryDetails.style.display = 'block';
+        }
+        
+        // Show UI elements
+        if (this.currentPlayerNameText) this.currentPlayerNameText.visible = true;
+        if (this.phaseNameText) this.phaseNameText.visible = true;
+        if (this.cycleText) this.cycleText.visible = true;
+        if (this.playerDisplays) {
+            this.playerDisplays.forEach(display => {
+                if (display.container) display.container.visible = true;
+            });
+        }
     }
 }

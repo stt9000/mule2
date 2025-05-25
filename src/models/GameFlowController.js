@@ -87,6 +87,12 @@ export default class GameFlowController {
         this.cycleManager.on('player.resources_decayed', (data) => this.broadcastEvent('player.resources_decayed', data));
         this.cycleManager.on('resource_decay.completed', (data) => this.broadcastEvent('resource_decay.completed', data));
         
+        // Auction phase events - forward them
+        this.cycleManager.on('auction_phase.initialized', (data) => {
+            console.log('GameFlowController: Forwarding auction_phase.initialized event');
+            this.broadcastEvent('auction_phase.initialized', data);
+        });
+        
         // Turn management events
         this.turnManager.on('turn.started', this.onTurnStarted.bind(this));
         this.turnManager.on('turn.ended', this.onTurnEnded.bind(this));

@@ -31,6 +31,11 @@ import ResourceDecay from './ResourceDecay.js';
 // Economy management
 import GoldManager from './GoldManager.js';
 
+// Auction system
+import AuctionManager from './AuctionManager.js';
+import MarketDataService from './MarketDataService.js';
+import TransactionEngine from './TransactionEngine.js';
+
 export {
     Territory,
     Construct,
@@ -51,7 +56,10 @@ export {
     ResourceProductionCalculator,
     ResourceStorage,
     ResourceDecay,
-    GoldManager
+    GoldManager,
+    AuctionManager,
+    MarketDataService,
+    TransactionEngine
 };
 
 export default {
@@ -74,5 +82,8 @@ export default {
     ResourceProductionCalculator,
     ResourceStorage,
     ResourceDecay,
-    GoldManager
+    GoldManager,
+    AuctionManager,
+    MarketDataService,
+    TransactionEngine
 };
