@@ -2111,8 +2111,14 @@ export default class GameScene extends Phaser.Scene {
         document.body.appendChild(endGameOverlay);
     }
     
-    update() {
-        // Game update logic
+    update(time, delta) {
+        // Update auction timer if auction is active
+        if (this.auctionManager && this.gameFlowController?.cycleManager?.currentPhase === 'auction_phase') {
+            // Convert delta from milliseconds to seconds
+            this.auctionManager.updateTimer(delta / 1000);
+        }
+        
+        // Other game update logic
     }
     
     // Game Flow Event Handlers

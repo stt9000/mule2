@@ -43,6 +43,11 @@ export default class AuctionSystemIntegration {
             this.auctionManager.setResourceQueueManager(this.resourceQueueManager);
         }
         
+        // Connect market data service to auction manager
+        if (this.auctionManager && this.marketDataService) {
+            this.auctionManager.setMarketDataService(this.marketDataService);
+        }
+        
         // Set up event listeners
         this.setupEventListeners();
         
@@ -273,8 +278,12 @@ export default class AuctionSystemIntegration {
         const buyerName = buyer?.name || `Player ${transaction.buyerId}`;
         const sellerName = seller?.name || `Player ${transaction.sellerId}`;
         
+        // Get the actual transaction from engine to get tax info
+        const engineTxn = this.transactionEngine.getTransaction(transaction.auctionTradeId) || transaction;
+        const taxText = engineTxn.guildTax ? ` (tax: ${engineTxn.guildTax}GP)` : '';
+        
         // Create floating text
-        const text = `${buyerName} bought ${transaction.quantity} ${transaction.resource} from ${sellerName} @ ${transaction.price}GP`;
+        const text = `${buyerName} bought ${transaction.quantity} ${transaction.resource} from ${sellerName} @ ${transaction.price}GP${taxText}`;
         
         // Show in center of screen
         const centerX = this.scene.cameras.main.centerX;

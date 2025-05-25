@@ -11,9 +11,9 @@ export default class ResourceQueueManager {
         this.resourceQueue = [...this.defaultResources];
         this.currentIndex = -1;
         
-        // Timing configuration
-        this.resourceDuration = 120; // 2 minutes per resource
-        this.transitionDelay = 10; // 10 seconds between resources
+        // Timing configuration (from GAME_RULES.md)
+        this.resourceDuration = 90; // 90 seconds per resource
+        this.transitionDelay = 5; // 5 seconds between resources
         
         // State tracking
         this.isActive = false;

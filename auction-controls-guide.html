@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Auction Hall Controls Guide</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #1a1a1a;
+            color: #ffffff;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        h1, h2 {
+            color: #3498db;
+        }
+        .step {
+            background-color: #2c3e50;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 10px;
+            border: 2px solid #34495e;
+        }
+        .button {
+            display: inline-block;
+            padding: 10px 20px;
+            margin: 10px 0;
+            border-radius: 5px;
+            font-weight: bold;
+            text-transform: uppercase;
+        }
+        .set-position {
+            background-color: #3498db;
+            color: #ffffff;
+        }
+        .buy {
+            background-color: #27ae60;
+            color: #ffffff;
+        }
+        .sell {
+            background-color: #e74c3c;
+            color: #ffffff;
+        }
+        .resource {
+            display: inline-block;
+            margin: 5px;
+            padding: 5px 10px;
+            border-radius: 5px;
+        }
+        .mana { background-color: #3498db; }
+        .vitality { background-color: #27ae60; }
+        .arcanum { background-color: #e74c3c; }
+        .aether { background-color: #9b59b6; }
+        .highlight {
+            background-color: #f39c12;
+            color: #000;
+            padding: 2px 5px;
+            border-radius: 3px;
+        }
+        .panel {
+            background-color: #1a252f;
+            border: 2px solid #3498db;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 10px;
+        }
+        .slider {
+            width: 100%;
+            margin: 10px 0;
+        }
+        img {
+            max-width: 100%;
+            border: 2px solid #34495e;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🏛️ Auction Hall Controls Guide</h1>
+        
+        <p>The Auction Hall in Magical Frontiers allows players to trade resources through a real-time bidding system. Here's how to use the controls:</p>
+
+        <div class="step">
+            <h2>Step 1: Access the Auction Hall</h2>
+            <p>During the <span class="highlight">Market Phase</span>, the Auction Hall panel appears automatically.</p>
+            <p>You'll see:</p>
+            <ul>
+                <li>📊 A central price scale (10-100 GP range)</li>
+                <li>💼 Your resource inventory on the left</li>
+                <li>🎯 Player position markers showing current bids</li>
+                <li>⏱️ Timer showing time remaining for current resource</li>
+            </ul>
+        </div>
+
+        <div class="step">
+            <h2>Step 2: Open Player Controls</h2>
+            <p>To set your buy or sell position:</p>
+            <p>1. Click the <span class="button set-position">SET POSITION</span> button (bottom-right of auction panel)</p>
+            <p>2. The Player Action Panel will appear</p>
+        </div>
+
+        <div class="step">
+            <h2>Step 3: Choose Buy or Sell Mode</h2>
+            <div class="panel">
+                <p><strong>Player Action Panel</strong></p>
+                <p>Choose your action:</p>
+                <div>
+                    <span class="button buy">BUY</span> - Purchase resources from other players
+                </div>
+                <div>
+                    <span class="button sell">SELL</span> - Sell your resources to other players
+                </div>
+            </div>
+        </div>
+
+        <div class="step">
+            <h2>Step 4: Set Your Price</h2>
+            <p>Use the <strong>Price Slider</strong> to set your bid/ask price:</p>
+            <div class="panel">
+                <p>Price: <span class="highlight">50 GP</span></p>
+                <input type="range" class="slider" min="10" max="100" value="50">
+                <p>💡 <strong>Tip:</strong> Higher prices when buying = more likely to get resources<br>
+                   Lower prices when selling = more likely to find buyers</p>
+            </div>
+        </div>
+
+        <div class="step">
+            <h2>Step 5: Set Quantity</h2>
+            <p>Use the <strong>Quantity Slider</strong> to set how much to trade:</p>
+            <div class="panel">
+                <p>Quantity: <span class="highlight">5</span> <span style="color: #95a5a6">(Available: 15 mana)</span></p>
+                <input type="range" class="slider" min="1" max="20" value="5">
+                <p>⚠️ <strong>Limits:</strong></p>
+                <ul>
+                    <li>When selling: Limited by your resource inventory</li>
+                    <li>When buying: Limited by your gold and the price</li>
+                    <li>Maximum: 20 units per trade</li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="step">
+            <h2>Step 6: Confirm Your Position</h2>
+            <p>Click <span class="button set-position">CONFIRM</span> to place your bid/ask</p>
+            <p>Your marker will appear on the price scale:</p>
+            <ul>
+                <li>🟢 Green markers = Buyers (left side)</li>
+                <li>🔴 Red markers = Sellers (right side)</li>
+            </ul>
+        </div>
+
+        <div class="step">
+            <h2>Resource Trading Order</h2>
+            <p>Resources are traded in this sequence (90 seconds each):</p>
+            <div>
+                <span class="resource mana">1. Mana</span> →
+                <span class="resource vitality">2. Vitality</span> →
+                <span class="resource arcanum">3. Arcanum</span> →
+                <span class="resource aether">4. Aether</span>
+            </div>
+        </div>
+
+        <div class="step">
+            <h2>How Trades Execute</h2>
+            <p>Trades happen automatically when:</p>
+            <ul>
+                <li>A buyer's price ≥ seller's price</li>
+                <li>Both players have sufficient resources/gold</li>
+            </ul>
+            <p>📌 <strong>Important:</strong> A 5% guild tax is deducted from all sales!</p>
+        </div>
+
+        <div class="step">
+            <h2>💡 Pro Tips</h2>
+            <ul>
+                <li>📈 Watch the market price indicator (orange line) for guidance</li>
+                <li>👀 Monitor other players' positions to find good deals</li>
+                <li>💰 Your available resources/gold updates in real-time</li>
+                <li>🔄 You can adjust your position anytime during the auction</li>
+                <li>📊 Prices adjust based on supply and demand between resources</li>
+            </ul>
+        </div>
+
+        <div class="step" style="background-color: #e74c3c;">
+            <h2>⚠️ Common Issues</h2>
+            <ul>
+                <li><strong>Can't see SET POSITION button?</strong> Make sure you're in the Market Phase</li>
+                <li><strong>Controls not appearing?</strong> Check if it's your turn to act</li>
+                <li><strong>Can't set high quantity?</strong> You're limited by your resources (selling) or gold (buying)</li>
+                <li><strong>Trade not executing?</strong> Ensure your buy price ≥ seller's price</li>
+            </ul>
+        </div>
+    </div>
+</body>
+</html>

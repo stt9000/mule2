@@ -23,6 +23,10 @@ export default class TransactionEngine {
         
         // Transaction ID counter
         this.transactionCounter = 0;
+        
+        // Guild tax configuration (from GAME_RULES.md)
+        this.guildTaxRate = 0.05; // 5% tax on all transactions
+        this.totalTaxCollected = 0;
     }
     
     /**
@@ -186,18 +190,26 @@ export default class TransactionEngine {
                     return false;
                 }
                 
-                // Calculate total cost
+                // Calculate total cost and tax
                 const totalCost = transaction.price * transaction.quantity;
+                const guildTax = Math.floor(totalCost * this.guildTaxRate);
+                const sellerReceives = totalCost - guildTax;
+                
+                // Store tax amount in transaction
+                transaction.guildTax = guildTax;
                 
                 // Perform the trade
                 // Note: In real implementation, this would use gameStateManager methods
                 // For now, we'll simulate the trade
                 
-                // Deduct gold from buyer
+                // Deduct gold from buyer (full cost)
                 buyer.gold = (buyer.gold || 0) - totalCost;
                 
-                // Add gold to seller
-                seller.gold = (seller.gold || 0) + totalCost;
+                // Add gold to seller (minus tax)
+                seller.gold = (seller.gold || 0) + sellerReceives;
+                
+                // Track total tax collected
+                this.totalTaxCollected += guildTax;
                 
                 // Transfer resources
                 seller.resources = seller.resources || {};
@@ -320,7 +332,11 @@ export default class TransactionEngine {
             total: 0,
             successRate: 0,
             volumeByResource: {},
-            averagePriceByResource: {}
+            averagePriceByResource: {},
+            guildTax: {
+                rate: this.guildTaxRate,
+                totalCollected: this.totalTaxCollected
+            }
         };
         
         stats.total = stats.completed + stats.failed;

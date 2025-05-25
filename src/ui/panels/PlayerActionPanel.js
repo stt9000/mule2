@@ -190,6 +190,9 @@ export default class PlayerActionPanel {
             const percent = (handle.x - minX) / trackWidth;
             this.currentPrice = Math.round(10 + percent * 90);
             label.setText(`Price: ${this.currentPrice} GP`);
+            
+            // Update available resources when price changes
+            this.updateAvailableResources();
         });
         
         // Store references
@@ -212,6 +215,15 @@ export default class PlayerActionPanel {
             color: '#ffffff'
         });
         this.container.add(label);
+        
+        // Resource available label
+        const availableLabel = this.scene.add.text(this.width - 20, sliderY, '(Available: 0)', {
+            fontSize: '12px',
+            fontFamily: 'Arial',
+            color: '#95a5a6'
+        });
+        availableLabel.setOrigin(1, 0);
+        this.container.add(availableLabel);
         
         // Slider track
         const trackX = 20;
@@ -252,6 +264,7 @@ export default class PlayerActionPanel {
         // Store references
         this.quantitySlider = {
             label,
+            availableLabel,
             track,
             handle,
             trackX,
@@ -325,6 +338,9 @@ export default class PlayerActionPanel {
                 container.background.fillRoundedRect(0, 0, 120, 35, 5);
             }
         });
+        
+        // Update available resources display
+        this.updateAvailableResources();
     }
     
     setPlayer(player) {
@@ -346,6 +362,48 @@ export default class PlayerActionPanel {
             const percent = (this.currentQuantity - 1) / 19;
             this.quantitySlider.handle.x = this.quantitySlider.trackX + (this.quantitySlider.trackWidth * percent);
             this.quantitySlider.label.setText(`Quantity: ${this.currentQuantity}`);
+        }
+        
+        // Update available resources
+        this.updateAvailableResources();
+    }
+    
+    updateAvailableResources() {
+        if (!this.currentPlayer || !this.auctionManager || !this.quantitySlider) return;
+        
+        const currentResource = this.auctionManager.currentResource;
+        if (!currentResource) return;
+        
+        let available = 0;
+        let maxQuantity = 20;
+        
+        if (this.currentMode === 'sell') {
+            // For selling, check player's resources
+            available = this.currentPlayer.resources?.[currentResource] || 0;
+            maxQuantity = Math.min(20, available);
+        } else {
+            // For buying, check player's gold
+            const playerGold = this.currentPlayer.gold || 0;
+            const maxAffordable = Math.floor(playerGold / this.currentPrice);
+            available = playerGold;
+            maxQuantity = Math.min(20, maxAffordable);
+        }
+        
+        // Update available label
+        if (this.currentMode === 'sell') {
+            this.quantitySlider.availableLabel.setText(`(Available: ${available} ${currentResource})`);
+        } else {
+            this.quantitySlider.availableLabel.setText(`(Gold: ${available})`);
+        }
+        
+        // Constrain current quantity to available
+        if (this.currentQuantity > maxQuantity) {
+            this.currentQuantity = Math.max(1, maxQuantity);
+            this.quantitySlider.label.setText(`Quantity: ${this.currentQuantity}`);
+            
+            // Update slider position
+            const percent = (this.currentQuantity - 1) / 19;
+            this.quantitySlider.handle.x = this.quantitySlider.trackX + (this.quantitySlider.trackWidth * percent);
         }
     }
     

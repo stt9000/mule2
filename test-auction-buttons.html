@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Auction Buttons</title>
+    <script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background: #1a1a1a;
+            color: white;
+            font-family: Arial, sans-serif;
+        }
+        #game-container {
+            border: 2px solid #3498db;
+        }
+        #debug {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(0,0,0,0.8);
+            padding: 10px;
+            border-radius: 5px;
+            font-family: monospace;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container"></div>
+    <div id="debug">
+        <div>Click any button to test</div>
+        <div id="debug-log"></div>
+    </div>
+
+    <script>
+        class TestScene extends Phaser.Scene {
+            constructor() {
+                super({ key: 'TestScene' });
+                this.debugLog = [];
+            }
+
+            create() {
+                this.addDebug('Scene created');
+
+                // Create a container like AuctionHallPanel
+                const container = this.add.container(100, 100);
+                container.setDepth(1000);
+
+                // Background
+                const bg = this.add.graphics();
+                bg.fillStyle(0x2c3e50, 0.9);
+                bg.fillRoundedRect(0, 0, 600, 400, 10);
+                container.add(bg);
+
+                // Title
+                const title = this.add.text(300, 20, 'Test Auction Controls', {
+                    fontSize: '24px',
+                    fontFamily: 'Arial',
+                    color: '#ffffff'
+                });
+                title.setOrigin(0.5, 0);
+                container.add(title);
+
+                // Create test buttons
+                this.createTestButton(container, 150, 200, 'BUY', 0x27ae60, () => {
+                    this.addDebug('BUY clicked!');
+                    this.showActionPanel('buy');
+                });
+
+                this.createTestButton(container, 300, 200, 'SELL', 0xe74c3c, () => {
+                    this.addDebug('SELL clicked!');
+                    this.showActionPanel('sell');
+                });
+
+                this.createTestButton(container, 450, 200, 'SET POS', 0x3498db, () => {
+                    this.addDebug('SET POSITION clicked!');
+                    this.showActionPanel('default');
+                });
+
+                // Create mock action panel
+                this.createActionPanel();
+
+                // Info text
+                const info = this.add.text(400, 500, 'Debug console on the right →', {
+                    fontSize: '14px',
+                    color: '#95a5a6'
+                });
+                info.setOrigin(0.5);
+
+                this.addDebug('All buttons created');
+            }
+
+            createTestButton(container, x, y, text, color, callback) {
+                const button = this.add.container(x, y);
+
+                const bg = this.add.graphics();
+                bg.fillStyle(color, 0.8);
+                bg.fillRoundedRect(-60, -20, 120, 40, 5);
+                button.add(bg);
+
+                const label = this.add.text(0, 0, text, {
+                    fontSize: '18px',
+                    fontFamily: 'Arial',
+                    color: '#ffffff',
+                    fontStyle: 'bold'
+                });
+                label.setOrigin(0.5);
+                button.add(label);
+
+                // Make interactive - this is the key part
+                bg.setInteractive(
+                    new Phaser.Geom.Rectangle(-60, -20, 120, 40),
+                    Phaser.Geom.Rectangle.Contains
+                );
+
+                bg.on('pointerover', () => {
+                    bg.clear();
+                    bg.fillStyle(color, 1);
+                    bg.fillRoundedRect(-60, -20, 120, 40, 5);
+                    this.addDebug(`Hover: ${text}`);
+                });
+
+                bg.on('pointerout', () => {
+                    bg.clear();
+                    bg.fillStyle(color, 0.8);
+                    bg.fillRoundedRect(-60, -20, 120, 40, 5);
+                });
+
+                bg.on('pointerdown', () => {
+                    this.addDebug(`Pointer down: ${text}`);
+                    callback();
+                });
+
+                container.add(button);
+            }
+
+            createActionPanel() {
+                this.actionPanel = this.add.container(100, 300);
+                this.actionPanel.setVisible(false);
+
+                const bg = this.add.graphics();
+                bg.fillStyle(0x1a1a1a, 0.95);
+                bg.fillRoundedRect(0, 0, 300, 150, 8);
+                bg.lineStyle(2, 0x3498db);
+                bg.strokeRoundedRect(0, 0, 300, 150, 8);
+                this.actionPanel.add(bg);
+
+                this.actionPanelText = this.add.text(150, 75, '', {
+                    fontSize: '16px',
+                    fontFamily: 'Arial',
+                    color: '#ffffff'
+                });
+                this.actionPanelText.setOrigin(0.5);
+                this.actionPanel.add(this.actionPanelText);
+            }
+
+            showActionPanel(mode) {
+                this.actionPanel.setVisible(true);
+                this.actionPanelText.setText(`Action Panel\nMode: ${mode}\n\n(Mock panel - would show sliders)`);
+                
+                // Hide after 2 seconds
+                this.time.delayedCall(2000, () => {
+                    this.actionPanel.setVisible(false);
+                });
+            }
+
+            addDebug(message) {
+                const timestamp = new Date().toLocaleTimeString();
+                this.debugLog.push(`[${timestamp}] ${message}`);
+                
+                // Keep only last 10 messages
+                if (this.debugLog.length > 10) {
+                    this.debugLog.shift();
+                }
+
+                // Update debug display
+                const debugEl = document.getElementById('debug-log');
+                debugEl.innerHTML = this.debugLog.join('<br>');
+            }
+        }
+
+        // Phaser configuration
+        const config = {
+            type: Phaser.AUTO,
+            width: 800,
+            height: 600,
+            parent: 'game-container',
+            backgroundColor: '#1a1a1a',
+            scene: TestScene
+        };
+
+        const game = new Phaser.Game(config);
+    </script>
+</body>
+</html>

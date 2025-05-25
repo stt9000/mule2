@@ -1,3 +1,5 @@
+import { BASE_PRICES } from '../config/gameConfig.js';
+
 /**
  * MarketDataService
  * Manages market data, price history, and supply/demand calculations
@@ -20,6 +22,17 @@ export default class MarketDataService {
         // Market events
         this.marketEvents = [];
         this.maxEvents = 50;
+        
+        // Market configuration for price calculation
+        this.marketConfig = {
+            equilibrium: 100, // Base equilibrium point for supply/demand
+            volatility: {
+                mana: 0.3,      // 30% volatility
+                vitality: 0.5,  // 50% volatility (food is more volatile)
+                arcanum: 0.2,   // 20% volatility (stable building material)
+                aether: 0.8     // 80% volatility (luxury resource)
+            }
+        };
         
         // Initialize resources
         const resources = ['mana', 'vitality', 'arcanum', 'aether'];
@@ -236,6 +249,55 @@ export default class MarketDataService {
         if (demand > supply * 1.5) return 'high_demand';
         if (supply > demand * 1.5) return 'high_supply';
         return 'balanced';
+    }
+    
+    /**
+     * Calculate dynamic price using the formula from game design
+     * Price = Base Price × (1 + [(Demand - Supply) ÷ Equilibrium] × Volatility)
+     */
+    calculateDynamicPrice(resource) {
+        // Get base price
+        const basePrice = BASE_PRICES[resource] || 50;
+        
+        // Get supply and demand
+        const supply = this.supplyData.get(resource)?.total || 0;
+        const demand = this.demandData.get(resource)?.total || 0;
+        
+        // Get volatility for this resource
+        const volatility = this.marketConfig.volatility[resource] || 0.3;
+        
+        // Calculate price modifier
+        const supplyDemandDiff = demand - supply;
+        const equilibrium = this.marketConfig.equilibrium;
+        const priceModifier = 1 + ((supplyDemandDiff / equilibrium) * volatility);
+        
+        // Calculate final price
+        let dynamicPrice = Math.round(basePrice * priceModifier);
+        
+        // Apply min/max constraints (10-500)
+        dynamicPrice = Math.max(10, Math.min(500, dynamicPrice));
+        
+        return dynamicPrice;
+    }
+    
+    /**
+     * Update market prices based on supply/demand
+     */
+    updateMarketPrices() {
+        // First calculate current supply/demand
+        this.calculateSupplyDemand();
+        
+        // Update prices for each resource
+        const resources = ['mana', 'vitality', 'arcanum', 'aether'];
+        resources.forEach(resource => {
+            const newPrice = this.calculateDynamicPrice(resource);
+            
+            // Only record if price changed significantly (>5%)
+            const currentPrice = this.getCurrentPrice(resource);
+            if (Math.abs(newPrice - currentPrice) / currentPrice > 0.05) {
+                this.recordTrade(resource, newPrice, 0); // 0 volume for price update
+            }
+        });
     }
     
     /**

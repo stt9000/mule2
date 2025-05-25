@@ -16,9 +16,9 @@ export default class AuctionManager {
         this.marketPrice = 50;
         this.lastTradePrice = 50;
         
-        // Timing
+        // Timing (from GAME_RULES.md)
         this.timeRemaining = 0;
-        this.auctionDuration = 120; // 2 minutes per resource
+        this.auctionDuration = 90; // 90 seconds per resource
         this.setupDuration = 30; // 30 seconds setup time
         
         // Transaction tracking
@@ -39,6 +39,9 @@ export default class AuctionManager {
         // Resource queue manager
         this.resourceQueueManager = null;
         
+        // Market data service
+        this.marketDataService = null;
+        
         // Initialize price history for each resource
         const resources = ['mana', 'vitality', 'arcanum', 'aether'];
         resources.forEach(resource => {
@@ -58,6 +61,13 @@ export default class AuctionManager {
      */
     setResourceQueueManager(resourceQueueManager) {
         this.resourceQueueManager = resourceQueueManager;
+    }
+    
+    /**
+     * Set market data service
+     */
+    setMarketDataService(marketDataService) {
+        this.marketDataService = marketDataService;
     }
     
     /**
@@ -103,9 +113,15 @@ export default class AuctionManager {
         this.playerPositions.clear();
         this.pendingTrades = [];
         
-        // Set market price based on history
-        const history = this.priceHistory.get(resource);
-        this.marketPrice = history[history.length - 1] || 50;
+        // Set market price based on dynamic calculation
+        if (this.marketDataService) {
+            this.marketDataService.updateMarketPrices();
+            this.marketPrice = this.marketDataService.calculateDynamicPrice(resource);
+        } else {
+            // Fallback to history-based price
+            const history = this.priceHistory.get(resource);
+            this.marketPrice = history[history.length - 1] || 50;
+        }
         this.lastTradePrice = this.marketPrice;
         
         // Calculate supply/demand for this resource
